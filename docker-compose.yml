@@ -1,0 +1,57 @@
+services:
+  database:
+    build:
+      context: ./tfg-db
+      dockerfile: Dockerfile
+    container_name: tfg-database
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: always
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - database
+
+  backend:
+    build:
+      context: ./tfg-backend
+    container_name: tfg-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - database
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./tfg-frontend
+    container_name: tfg-frontend
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  pgadmin_data:
