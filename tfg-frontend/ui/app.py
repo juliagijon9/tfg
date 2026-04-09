@@ -4,52 +4,43 @@ import streamlit as st
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
 
-st.set_page_config(page_title="TFG Demo", page_icon="🚀", layout="centered")
+st.set_page_config(page_title="TFG - Asistente de Triaje", page_icon="🎯", layout="wide")
 
-st.title("Demo TFG: Streamlit + FastAPI + Docker")
-st.write("Este frontend en Streamlit consume un backend FastAPI.")
-
-st.subheader("Comprobación de estado del backend")
-
-if st.button("Comprobar backend"):
-    try:
-        response = requests.get(f"{BACKEND_URL}/health", timeout=5)
-        response.raise_for_status()
-        st.success("Backend disponible")
-        st.json(response.json())
-    except requests.RequestException as e:
-        st.error(f"No se pudo conectar con el backend: {e}")
-
-st.subheader("Mensaje simple del backend")
-
-if st.button("Pedir saludo"):
-    try:
-        response = requests.get(f"{BACKEND_URL}/hello", timeout=5)
-        response.raise_for_status()
-        data = response.json()
-        st.success(data["message"])
-    except requests.RequestException as e:
-        st.error(f"Error al pedir el saludo: {e}")
-
-st.subheader("Enviar nombre al backend")
-
-name = st.text_input("Escribe tu nombre")
-
-if st.button("Enviar al backend"):
-    if not name.strip():
-        st.warning("Introduce un nombre")
-    else:
-        try:
-            response = requests.post(
-                f"{BACKEND_URL}/greet",
-                json={"name": name},
-                timeout=5,
-            )
-            response.raise_for_status()
-            data = response.json()
-            st.success(data["message"])
-        except requests.RequestException as e:
-            st.error(f"Error al enviar datos al backend: {e}")
+st.title("🎯 Asistente de Triaje Inteligente")
+st.caption("Azure DevOps — Detección de tickets similares y duplicados")
 
 st.markdown("---")
-st.caption(f"Backend URL actual: {BACKEND_URL}")
+
+# Quick status
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    try:
+        r = requests.get(f"{BACKEND_URL}/health", timeout=5)
+        data = r.json()
+        if data.get("db_connected"):
+            st.metric("Base de datos", "✅ Conectada")
+        else:
+            st.metric("Base de datos", "❌ Sin conexión")
+    except Exception:
+        st.metric("Base de datos", "❌ Sin conexión")
+
+with col2:
+    try:
+        r = requests.get(f"{BACKEND_URL}/work-items/count", timeout=5)
+        count = r.json().get("count", 0)
+        st.metric("Work Items", f"{count:,}")
+    except Exception:
+        st.metric("Work Items", "—")
+
+with col3:
+    try:
+        r = requests.get(f"{BACKEND_URL}/metrics", timeout=5)
+        data = r.json()
+        total_rel = data.get("total_relations", 0)
+        st.metric("Relaciones", f"{total_rel:,}")
+    except Exception:
+        st.metric("Relaciones", "—")
+
+st.markdown("---")
+st.info("Usa el menú lateral para navegar entre las páginas: **Sync & Embeddings**, **Buscar Similares**, **Métricas**.")

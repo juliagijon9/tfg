@@ -17,15 +17,32 @@ PG_PASS = os.getenv("POSTGRES_PASSWORD")
 # ---------------------------
 # Embeddings configuration
 # ---------------------------
-EMBEDDING_MODEL = "dummy-embedding-v1"
-EMBEDDING_DIM = 128  # pequeño a propósito para prueba
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "dummy")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "128"))
 
 
 def get_embedding(text: str) -> list[float]:
     """
-    Embedding de prueba.
-    Más adelante se sustituye por Azure OpenAI / OpenAI.
+    Genera un embedding para el texto dado.
+
+    - EMBEDDING_MODEL="dummy" → vector aleatorio determinista (para validar pipeline)
+    - EMBEDDING_MODEL="text-embedding-ada-002" → TODO: llamar a Azure OpenAI
+      Requiere: AZURE_OPENAI_ENDPOINT y AZURE_OPENAI_KEY en .env
+      Ejemplo:
+        import openai
+        client = openai.AzureOpenAI(
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_key=os.getenv("AZURE_OPENAI_KEY"),
+            api_version="2024-02-01"
+        )
+        response = client.embeddings.create(input=text, model=EMBEDDING_MODEL)
+        return response.data[0].embedding
     """
+    if EMBEDDING_MODEL != "dummy":
+        raise NotImplementedError(
+            f"Modelo '{EMBEDDING_MODEL}' no implementado aún. "
+            "Usa EMBEDDING_MODEL=dummy o implementa la llamada a Azure OpenAI."
+        )
     np.random.seed(abs(hash(text)) % (2**32))
     return np.random.rand(EMBEDDING_DIM).tolist()
 
