@@ -10,9 +10,9 @@ EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "128"))
 def get_embedding(text: str) -> list[float]:
     """Generate embedding for text. Uses Azure OpenAI if configured, else dummy."""
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    key = os.getenv("AZURE_OPENAI_KEY")
-    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+    key = os.getenv("AZURE_OPENAI_API_KEY")
+    deployment = os.getenv("AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
 
     if endpoint and key and deployment:
         import openai
