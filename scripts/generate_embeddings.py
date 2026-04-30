@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import psycopg2
 import numpy as np
@@ -48,6 +49,38 @@ def _truncate(text: str) -> str:
     return text[:MAX_CHARS]
 
 
+def _strip_html(text: str) -> str:
+    """Elimina etiquetas HTML de un texto."""
+    if not text:
+        return ""
+    return re.sub(r'<[^>]+>', '', text).strip()
+
+
+def build_embedding_text(work_item_type, title, description, repro_steps=None, acceptance_criteria=None) -> str:
+    """Construye el texto para generar el embedding según el tipo de work item.
+    - Bug: title + repro_steps + acceptance_criteria (+ description si tiene contenido)
+    - Resto: title + description
+    """
+    parts = [title or '']
+
+    if work_item_type == 'Bug':
+        rs = _strip_html(repro_steps)
+        ac = _strip_html(acceptance_criteria)
+        if rs:
+            parts.append(rs)
+        if ac:
+            parts.append(ac)
+        desc = _strip_html(description)
+        if desc:
+            parts.append(desc)
+    else:
+        desc = description or ''
+        if desc:
+            parts.append(desc)
+
+    return '\n\n'.join(parts).strip()
+
+
 def get_embeddings_batch(texts: list[str]) -> list[list[float]]:
     """
     Genera embeddings para una lista de textos.
@@ -89,7 +122,7 @@ def main():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, title, description
+        SELECT id, title, description, work_item_type, repro_steps, acceptance_criteria
         FROM ado_work_items
         WHERE id NOT IN (
             SELECT work_item_id FROM ado_work_item_embeddings
@@ -106,8 +139,8 @@ def main():
 
     # Preparar textos
     tickets = []
-    for ticket_id, title, description in rows:
-        text = f"{title or ''}\n\n{description or ''}".strip()
+    for ticket_id, title, description, work_item_type, repro_steps, acceptance_criteria in rows:
+        text = build_embedding_text(work_item_type, title, description, repro_steps, acceptance_criteria)
         if text:
             tickets.append((ticket_id, text))
 

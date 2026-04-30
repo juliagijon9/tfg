@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 
 from backend.db import get_connection
@@ -30,13 +31,42 @@ def get_embedding(text: str) -> list[float]:
     return np.random.rand(EMBEDDING_DIM).tolist()
 
 
+def _strip_html(text: str) -> str:
+    """Elimina etiquetas HTML de un texto."""
+    if not text:
+        return ""
+    return re.sub(r'<[^>]+>', '', text).strip()
+
+
+def build_embedding_text(work_item_type, title, description, repro_steps=None, acceptance_criteria=None) -> str:
+    """Construye el texto para generar el embedding según el tipo de work item."""
+    parts = [title or '']
+
+    if work_item_type == 'Bug':
+        rs = _strip_html(repro_steps)
+        ac = _strip_html(acceptance_criteria)
+        if rs:
+            parts.append(rs)
+        if ac:
+            parts.append(ac)
+        desc = _strip_html(description)
+        if desc:
+            parts.append(desc)
+    else:
+        desc = description or ''
+        if desc:
+            parts.append(desc)
+
+    return '\n\n'.join(parts).strip()
+
+
 def run_generate_embeddings() -> dict:
     """Generate embeddings for all work items that don't have one yet."""
     conn = get_connection()
     try:
         cur = conn.cursor()
         cur.execute("""
-            SELECT id, title, description
+            SELECT id, title, description, work_item_type, repro_steps, acceptance_criteria
             FROM ado_work_items
             WHERE id NOT IN (
                 SELECT work_item_id FROM ado_work_item_embeddings
@@ -45,12 +75,12 @@ def run_generate_embeddings() -> dict:
         rows = cur.fetchall()
 
         model_used = "azure-openai" if (
-            os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_KEY")
+            os.getenv("AZURE_OPENAI_ENDPOINT") and os.getenv("AZURE_OPENAI_API_KEY")
         ) else "dummy"
 
         processed = 0
-        for i, (ticket_id, title, description) in enumerate(rows, start=1):
-            text = f"{title or ''}\n\n{description or ''}".strip()
+        for i, (ticket_id, title, description, work_item_type, repro_steps, acceptance_criteria) in enumerate(rows, start=1):
+            text = build_embedding_text(work_item_type, title, description, repro_steps, acceptance_criteria)
             if not text:
                 continue
 

@@ -111,7 +111,9 @@ def ensure_table(conn):
             iteration_path TEXT,
             assigned_to TEXT,
             tags TEXT,
-            description TEXT
+            description TEXT,
+            repro_steps TEXT,
+            acceptance_criteria TEXT
         );
         """)
     conn.commit()
@@ -138,12 +140,15 @@ def upsert_items(conn, items: list[dict]):
             assigned,
             fields.get("System.Tags"),
             fields.get("System.Description"),
+            fields.get("Microsoft.VSTS.TCM.ReproSteps"),
+            fields.get("Microsoft.VSTS.Common.AcceptanceCriteria"),
         ))
 
     sql = """
     INSERT INTO ado_work_items
     (id, work_item_type, title, state, created_date, changed_date,
-     area_path, iteration_path, assigned_to, tags, description)
+     area_path, iteration_path, assigned_to, tags, description,
+     repro_steps, acceptance_criteria)
     VALUES %s
     ON CONFLICT (id) DO UPDATE SET
         work_item_type = EXCLUDED.work_item_type,
@@ -155,7 +160,9 @@ def upsert_items(conn, items: list[dict]):
         iteration_path = EXCLUDED.iteration_path,
         assigned_to = EXCLUDED.assigned_to,
         tags = EXCLUDED.tags,
-        description = EXCLUDED.description;
+        description = EXCLUDED.description,
+        repro_steps = EXCLUDED.repro_steps,
+        acceptance_criteria = EXCLUDED.acceptance_criteria;
     """
 
     with conn.cursor() as cur:
@@ -192,7 +199,9 @@ def main():
         "System.IterationPath",
         "System.AssignedTo",
         "System.Tags",
-        "System.Description"
+        "System.Description",
+        "Microsoft.VSTS.TCM.ReproSteps",
+        "Microsoft.VSTS.Common.AcceptanceCriteria"
     ]
 
     items = get_work_items_batch(ids, fields)

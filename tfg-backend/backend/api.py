@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.db import get_connection
@@ -11,6 +12,15 @@ from backend.services.similarity_service import find_top_k, save_relations
 from backend.services.metrics_service import get_metrics
 
 app = FastAPI(title="TFG Backend API")
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite todos los orígenes (ajusta para producción)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ----- Schemas -----

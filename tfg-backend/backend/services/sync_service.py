@@ -65,12 +65,15 @@ def _upsert_items(conn, items: list[dict]):
             assigned,
             fields.get("System.Tags"),
             fields.get("System.Description"),
+            fields.get("Microsoft.VSTS.TCM.ReproSteps"),
+            fields.get("Microsoft.VSTS.Common.AcceptanceCriteria"),
         ))
 
     sql = """
     INSERT INTO ado_work_items
     (id, work_item_type, title, state, created_date, changed_date,
-     area_path, iteration_path, assigned_to, tags, description)
+     area_path, iteration_path, assigned_to, tags, description,
+     repro_steps, acceptance_criteria)
     VALUES %s
     ON CONFLICT (id) DO UPDATE SET
         work_item_type = EXCLUDED.work_item_type,
@@ -82,7 +85,9 @@ def _upsert_items(conn, items: list[dict]):
         iteration_path = EXCLUDED.iteration_path,
         assigned_to = EXCLUDED.assigned_to,
         tags = EXCLUDED.tags,
-        description = EXCLUDED.description;
+        description = EXCLUDED.description,
+        repro_steps = EXCLUDED.repro_steps,
+        acceptance_criteria = EXCLUDED.acceptance_criteria;
     """
     with conn.cursor() as cur:
         execute_values(cur, sql, rows)
@@ -101,6 +106,8 @@ FIELDS = [
     "System.AssignedTo",
     "System.Tags",
     "System.Description",
+    "Microsoft.VSTS.TCM.ReproSteps",
+    "Microsoft.VSTS.Common.AcceptanceCriteria",
 ]
 
 

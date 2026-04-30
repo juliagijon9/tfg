@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS ado_work_items (
     iteration_path  TEXT,
     assigned_to     TEXT,
     tags            TEXT,
-    description     TEXT
+    description     TEXT,
+    repro_steps     TEXT,
+    acceptance_criteria TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ado_work_item_embeddings (
