@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -10,6 +10,12 @@ from backend.services.sync_service import run_sync
 from backend.services.embedding_service import run_generate_embeddings
 from backend.services.similarity_service import find_top_k, save_relations
 from backend.services.metrics_service import get_metrics
+from backend.config import get_settings
+from backend.devops_client import fetch_recent_tickets
+from backend.db_client import fetch_tickets_after, upsert_intention
+from backend.intent_extractor import extract_intention
+from backend.models import WorkItem
+from backend.pipeline import triage_ticket
 
 app = FastAPI(title="TFG Backend API")
 
@@ -158,3 +164,99 @@ def relations_save(req: SaveRelationsRequest):
 @app.get("/metrics")
 def metrics():
     return get_metrics()
+
+
+# ----- Classify -----
+
+def _run_classify_job(job_id: str, top: int) -> None:
+    update_job(job_id, status="running")
+    try:
+        settings = get_settings()
+        tickets = fetch_recent_tickets(top=top, settings=settings)
+        items = []
+        for ticket in tickets:
+            # Convierte Ticket (ADO) a WorkItem mínimo para el pipeline
+            work_item = WorkItem(
+                id=ticket.id,
+                work_item_type="Unknown",
+                title=ticket.title,
+                created_date=datetime.now(timezone.utc),
+                description=ticket.description or None,
+            )
+            result = triage_ticket(work_item, settings)
+            items.append({
+                "id": ticket.id,
+                "title": ticket.title,
+                "area": result.classification.area,
+                "justification": result.classification.justification,
+            })
+        update_job(
+            job_id,
+            status="completed",
+            result={"items": items},
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as e:
+        update_job(
+            job_id,
+            status="failed",
+            error=str(e),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+@app.post("/jobs/classify")
+def start_classify(bg: BackgroundTasks, top: int = Query(default=10, ge=1, le=50)):
+    job_id = create_job("classify")
+    bg.add_task(_run_classify_job, job_id, top)
+    return {"job_id": job_id}
+
+
+# ----- Extract Intention -----
+
+def _run_extract_intention_job(job_id: str, since: str, limit: int | None) -> None:
+    update_job(job_id, status="running")
+    try:
+        settings = get_settings()
+        work_items = fetch_tickets_after(cutoff_date=since, settings=settings)
+        if limit is not None:
+            work_items = work_items[:limit]
+        items = []
+        for wi in work_items:
+            intention = extract_intention(wi, settings)
+            upsert_intention(
+                work_item_id=wi.id,
+                intention=intention.intention,
+                model=settings.AZURE_OPENAI_DEPLOYMENT,
+                settings=settings,
+            )
+            items.append({
+                "id": wi.id,
+                "work_item_type": wi.work_item_type,
+                "title": wi.title,
+                "intention": intention.intention,
+            })
+        update_job(
+            job_id,
+            status="completed",
+            result={"items": items},
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as e:
+        update_job(
+            job_id,
+            status="failed",
+            error=str(e),
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+
+@app.post("/jobs/extract-intention")
+def start_extract_intention(
+    bg: BackgroundTasks,
+    since: str = Query(default="2026-04-30", description="Fecha de corte YYYY-MM-DD"),
+    limit: int | None = Query(default=10, ge=1, le=100),
+):
+    job_id = create_job("extract-intention")
+    bg.add_task(_run_extract_intention_job, job_id, since, limit)
+    return {"job_id": job_id}

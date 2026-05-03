@@ -1,0 +1,5 @@
+azure-devops>=7.1.0b4
+openai>=1.40.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+rich>=13.0.0
