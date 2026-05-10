@@ -38,6 +38,9 @@ services:
       - .env
     environment:
       POSTGRES_HOST: database
+      EMBEDDING_MODEL: text-embedding-3-large
+    volumes:
+      - ./scripts:/scripts
     depends_on:
       - database
     restart: unless-stopped
