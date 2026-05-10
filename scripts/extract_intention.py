@@ -34,51 +34,27 @@ CUTOFF_DATE = "2026-04-30"   # Procesa tickets creados después de esta fecha
 DELAY_BETWEEN_CALLS = 0.3    # Segundos entre llamadas a la API (evita rate limit)
 
 # ---------------------------
-# Prompt de extracción
+# Carga del prompt desde BD
 # ---------------------------
-INTENT_EXTRACTION_PROMPT = """
-Eres un agente experto en interpretar y clarificar tickets de
-Azure DevOps de Iberia Express. Tu única tarea es extraer la
-INTENCIÓN real que reside detrás del contenido de un ticket,
-redactada en una sentencia clara, técnica y concreta que pueda
-ser utilizada por otro sistema de IA en una etapa posterior
-(clasificación, detección de duplicados o asignación).
-
-Reglas estrictas:
-- NO resumas el ticket. CLARIFICA su intención.
-- La intención puede ser MÁS LARGA que el texto original si eso
-  ayuda a desambiguar. La extensión típica óptima estará entre
-  150 y 400 caracteres. NUNCA superes los 600 caracteres.
-- Traduce lenguaje sintomático a lenguaje del problema real.
-- Elimina saludos, despedidas, agradecimientos, firmas, contexto
-  irrelevante, anécdotas y cualquier información que no aporte
-  al problema.
-- Corrige implícitamente faltas de ortografía y ambigüedades
-  léxicas si entorpecen la interpretación.
-- Mantén la información técnica relevante: nombres de sistemas,
-  módulos, endpoints, identificadores, mensajes de error,
-  pantallas o flujos concretos mencionados.
-- Si el ticket es ambiguo y no se puede inferir la intención
-  con razonable certeza, devuelve la intención más conservadora
-  posible y márcalo añadiendo al final el texto "[INTENCIÓN INCIERTA]".
-- NO inventes datos. NO añadas conclusiones, hipótesis ni
-  recomendaciones de solución. SOLO la intención.
-- Responde SIEMPRE en español, independientemente del idioma
-  del ticket de entrada.
-
-Contexto operativo del entorno (Iberia Express, plataformas digitales):
-- Existen áreas funcionales como ecommerce (compra web, checkout,
-  pagos), aplicación móvil VISEO, sistemas aeronáuticos (vuelos,
-  flota, horarios), business intelligence (informes, dashboards),
-  backend financiero (facturación, BFM), marketing digital y QA/validación.
-- Los tickets pueden ser bugs, peticiones de desarrollo (deliveries),
-  tareas de QA u otros tipos.
-
-Formato de salida obligatorio (JSON estricto):
-{
-  "intention": "<sentencia clara, técnica, en español, ≤ 600 caracteres, sin saltos de línea>"
-}
-"""
+def load_prompt(prompt_name: str) -> str:
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT prompt_text FROM public.ado_config_prompt
+                WHERE prompt_name = %s
+                  AND version = (
+                      SELECT MAX(version) FROM public.ado_config_prompt
+                      WHERE prompt_name = %s
+                  );
+            """, (prompt_name, prompt_name))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if not row:
+        print(f"❌ No se encontró el prompt '{prompt_name}' en ado_config_prompt")
+        import sys; sys.exit(1)
+    return row[0]
 
 
 # ---------------------------
@@ -125,7 +101,7 @@ def fetch_tickets(cutoff_date):
 # ---------------------------
 # 2. Llamar a Azure OpenAI
 # ---------------------------
-def extract_intention(work_item_type, title, description, repro_steps, acceptance_criteria, tags):
+def extract_intention(work_item_type, title, description, repro_steps, acceptance_criteria, tags, prompt: str):
     client = AzureOpenAI(
         azure_endpoint=AZURE_ENDPOINT,
         api_key=AZURE_KEY,
@@ -144,7 +120,7 @@ def extract_intention(work_item_type, title, description, repro_steps, acceptanc
     response = client.chat.completions.create(
         model=AZURE_DEPLOYMENT,
         messages=[
-            {"role": "system", "content": INTENT_EXTRACTION_PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user", "content": user_payload},
         ],
         temperature=0.1,
@@ -187,6 +163,8 @@ def main():
     print(f"🔧 Modelo: {AZURE_DEPLOYMENT}")
     print(f"📅 Fecha de corte: {CUTOFF_DATE}")
 
+    prompt = load_prompt("prompt_intention")
+
     tickets = fetch_tickets(CUTOFF_DATE)
     if not tickets:
         print("✅ Nada que procesar.")
@@ -200,7 +178,7 @@ def main():
         try:
             intention = extract_intention(
                 work_item_type, title, description,
-                repro_steps, acceptance_criteria, tags
+                repro_steps, acceptance_criteria, tags, prompt
             )
             upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT)
             processed += 1
