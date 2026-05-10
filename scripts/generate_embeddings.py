@@ -122,7 +122,7 @@ def main():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT id, title, description, work_item_type, repro_steps, acceptance_criteria
+        SELECT distinct id, title, description, work_item_type, repro_steps, acceptance_criteria
         FROM ado_work_items
         WHERE id NOT IN (
             SELECT work_item_id FROM ado_work_item_embeddings

@@ -49,7 +49,7 @@ def wiql_get_ids() -> list[int]:
         FROM WorkItems
         WHERE [System.TeamProject] = '{PROJECT}'
           AND [System.State] <> 'Closed'
-          AND [System.ChangedDate] >= @Today - 7ra
+          AND [System.ChangedDate] >= @Today - 7
         ORDER BY [System.ChangedDate] DESC
         """
     }

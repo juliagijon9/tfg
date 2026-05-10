@@ -27,10 +27,10 @@ AZURE_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
 AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
 # ---------------------------
-# Prompt de clasificación
+# Prompt de tagging
 # ---------------------------
 SYSTEM_PROMPT = (
-    Path(__file__).parent / "prompts" / "classification_prompt.txt"
+    Path(__file__).parent / "prompts" / "tag_prompt.txt"
 ).read_text(encoding="utf-8")
 
 # ---------------------------
@@ -38,7 +38,7 @@ SYSTEM_PROMPT = (
 # ---------------------------
 QUERY = """
     SELECT
-    distinct
+	distinct
         i.id,
         i.work_item_type,
         i.title,
@@ -48,14 +48,21 @@ QUERY = """
         i.description,
         i.repro_steps,
         i.acceptance_criteria,
-        ii.intention
+        ii.intention,
+        ic.area,
+        ic.justification
     FROM public.ado_work_items i
-    LEFT JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
-	LEFT JOIN public.ado_work_item_classifications ic on IC.work_item_id = i.id
+    LEFT JOIN public.ado_work_item_intentions ii
+        ON ii.work_item_id = i.id
+    LEFT JOIN public.ado_work_item_classifications ic
+        ON ic.work_item_id = i.id
+	LEFT JOIN public.ado_work_item_tag it
+		on it.work_item_id = i.id
     WHERE
         i.created_date > '2026-04-30'
         AND ii.work_item_id IS NOT NULL
-		and IC.work_item_id is null
+        AND ic.work_item_id IS NOT NULL
+		AND it.work_item_id IS NULL
     ORDER BY i.id;
 """
 
@@ -94,19 +101,21 @@ def build_ticket_text(row: dict) -> str:
     return (
         f"Tipo: {row['work_item_type'] or '(sin datos)'}\n"
         f"Título: {row['title'] or '(sin datos)'}\n"
-        f"Área actual: {row['area_path'] or '(sin datos)'}\n"
-        f"Etiquetas: {row['tags'] or '(sin datos)'}\n"
+        f"Área actual en DevOps: {row['area_path'] or '(sin datos)'}\n"
+        f"Etiquetas actuales en DevOps: {row['tags'] or '(sin datos)'}\n"
         f"Descripción: {clean_html(row['description'])}\n"
         f"Pasos para reproducir: {clean_html(row['repro_steps'])}\n"
         f"Criterios de aceptación: {clean_html(row['acceptance_criteria'])}\n"
-        f"Intencionalidad extraída: {row['intention'] or '(sin datos)'}"
+        f"Intencionalidad extraída: {row['intention'] or '(sin datos)'}\n"
+        f"Área asignada por el clasificador: {row['area'] or '(sin datos)'}\n"
+        f"Justificación del clasificador: {row['justification'] or '(sin datos)'}"
     )
 
 
 # ---------------------------
 # Llamada a Azure OpenAI
 # ---------------------------
-def classify_ticket(client, ticket_id: int, ticket_text: str) -> tuple[str, str]:
+def get_tags(client, ticket_id: int, ticket_text: str) -> list[str]:
     try:
         response = client.chat.completions.create(
             model=AZURE_DEPLOYMENT,
@@ -119,12 +128,13 @@ def classify_ticket(client, ticket_id: int, ticket_text: str) -> tuple[str, str]
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
-        area = data.get("area", "[SIN ÁREA]").strip()
-        justification = data.get("justification", "[SIN JUSTIFICACIÓN]").strip()
-        return area, justification
+        tags = data.get("tags", [])
+        if not isinstance(tags, list) or not tags:
+            raise ValueError(f"Respuesta inválida: {data}")
+        return [str(t).strip() for t in tags if t]
     except Exception as e:
         print(f"❌ Error en ticket {ticket_id}: {e}")
-        return "[ERROR]", "[ERROR]"
+        return []
 
 
 # ---------------------------
@@ -133,31 +143,32 @@ def classify_ticket(client, ticket_id: int, ticket_text: str) -> tuple[str, str]
 def ensure_table(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("""
-            CREATE TABLE IF NOT EXISTS public.ado_work_item_classifications (
-                work_item_id   BIGINT    NOT NULL,
-                area           TEXT      NOT NULL,
-                justification  TEXT      NOT NULL,
-                model          TEXT      NOT NULL,
-                classified_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (work_item_id)
+            CREATE TABLE IF NOT EXISTS public.ado_work_item_tag (
+                work_item_id     BIGINT    NOT NULL,
+                tag              TEXT      NOT NULL,
+                model            TEXT      NOT NULL,
+                extracted_tag_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (work_item_id, tag)
             );
         """)
     conn.commit()
 
 
-def save_classification(conn, work_item_id: int, area: str,
-                        justification: str, model: str) -> None:
+def save_tags(conn, work_item_id: int, tags: list[str], model: str) -> None:
     with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO public.ado_work_item_classifications
-                (work_item_id, area, justification, model, classified_at)
-            VALUES (%s, %s, %s, %s, NOW())
-            ON CONFLICT (work_item_id) DO UPDATE SET
-                area          = EXCLUDED.area,
-                justification = EXCLUDED.justification,
-                model         = EXCLUDED.model,
-                classified_at = EXCLUDED.classified_at;
-        """, (work_item_id, area, justification, model))
+        cur.execute(
+            "DELETE FROM public.ado_work_item_tag WHERE work_item_id = %s;",
+            (work_item_id,)
+        )
+        for tag in tags:
+            cur.execute(
+                """
+                INSERT INTO public.ado_work_item_tag
+                    (work_item_id, tag, model, extracted_tag_at)
+                VALUES (%s, %s, %s, NOW());
+                """,
+                (work_item_id, tag, model)
+            )
     conn.commit()
 
 
@@ -170,14 +181,19 @@ def process_tickets(conn, client) -> None:
         columns = [desc[0] for desc in cur.description]
         rows = [dict(zip(columns, row)) for row in cur.fetchall()]
 
-    print(f"📋 Tickets a clasificar: {len(rows)}")
+    print(f"📋 Tickets a taggear: {len(rows)}")
 
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
         ticket_text = build_ticket_text(row)
-        area, justification = classify_ticket(client, ticket_id, ticket_text)
-        save_classification(conn, ticket_id, area, justification, AZURE_DEPLOYMENT)
-        print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {area}")
+        tags = get_tags(client, ticket_id, ticket_text)
+
+        if tags:
+            save_tags(conn, ticket_id, tags, AZURE_DEPLOYMENT)
+            print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {', '.join(tags)}")
+        else:
+            print(f"  ❌ [{i}/{len(rows)}] Ticket {ticket_id}: ERROR (sin tags)")
+
         time.sleep(0.3)
 
 
@@ -202,7 +218,7 @@ def main() -> None:
     process_tickets(conn, client)
 
     conn.close()
-    print("✅ Clasificación completada.")
+    print("✅ Tagging completado.")
 
 
 if __name__ == "__main__":

@@ -28,7 +28,7 @@ def main():
 
     # embedding origen
     cur.execute("""
-        SELECT embedding
+        SELECT distinct embedding
         FROM ado_work_item_embeddings
         WHERE work_item_id = %s
     """, (SOURCE_ID,))
