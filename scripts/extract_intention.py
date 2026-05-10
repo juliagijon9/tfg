@@ -107,9 +107,12 @@ def fetch_tickets(cutoff_date):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT id, work_item_type, title, description, repro_steps, acceptance_criteria, tags
-        FROM public.ado_work_items
-        WHERE created_date > %s
+        SELECT i.id, i.work_item_type, i.title, i.description, i.repro_steps, i.acceptance_criteria, i.tags
+        FROM public.ado_work_items i
+        left join ado_work_item_intentions II on II.work_item_id = i.id
+        WHERE
+        created_date > %s and
+        ii.work_item_id is null
         ORDER BY created_date DESC
     """, (cutoff_date,))
     rows = cur.fetchall()

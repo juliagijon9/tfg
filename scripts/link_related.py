@@ -124,7 +124,7 @@ def main():
         print(f"🔍 Modo single — SOURCE_ID={SOURCE_ID}")
     else:
         cur.execute("""
-            SELECT w.id
+            SELECT distinct w.id
             FROM ado_work_items w
             JOIN ado_work_item_embeddings e ON e.work_item_id = w.id
             WHERE w.id NOT IN (SELECT DISTINCT source_id FROM ado_work_item_relations)
