@@ -22,7 +22,7 @@ SOURCE_ID = os.getenv("SOURCE_ID")  # None → batch mode
 TOP_K = int(os.getenv("TOP_K", "10"))
 RELATED_THRESHOLD = float(os.getenv("RELATED_THRESHOLD", "0.80"))
 DUPLICATE_THRESHOLD = float(os.getenv("DUPLICATE_THRESHOLD", "0.90"))
-MAX_SOURCES = int(os.getenv("MAX_SOURCES", "100"))
+MAX_SOURCES = int(os.getenv("MAX_SOURCES", "5000"))
 DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
 
 
@@ -124,11 +124,15 @@ def main():
         print(f"🔍 Modo single — SOURCE_ID={SOURCE_ID}")
     else:
         cur.execute("""
-            SELECT distinct w.id
-            FROM ado_work_items w
-            JOIN ado_work_item_embeddings e ON e.work_item_id = w.id
-            WHERE w.id NOT IN (SELECT DISTINCT source_id FROM ado_work_item_relations)
-            ORDER BY w.changed_date DESC
+            select id from
+            (
+            SELECT distinct i.id, i.changed_date
+            FROM ado_work_items i
+            JOIN ado_work_item_embeddings ie ON ie.work_item_id = i.id
+            left join ado_work_item_relations ir on ir.source_id=i.id
+            WHERE ir.source_id is null
+            ORDER BY i.changed_date DESC
+            )
             LIMIT %s
         """, (MAX_SOURCES,))
         source_ids = [row[0] for row in cur.fetchall()]
@@ -152,7 +156,7 @@ def main():
         total_stats["related"] += stats["related"]
         total_stats["skipped"] += stats["skipped"]
 
-        if i % 50 == 0:
+        if i % 100 == 0:
             if not DRY_RUN:
                 conn.commit()
             print(f"  Progreso: {i}/{len(source_ids)} tickets procesados...")
@@ -164,7 +168,7 @@ def main():
     conn.close()
 
     elapsed = time.time() - t_start
-    print(f"\n{'='*50}")
+    print(f"\n{'='*100}")
     print(f"✅ Completado en {elapsed:.2f}s")
     print(f"   Tickets procesados: {len(source_ids)}")
     print(f"   Relaciones duplicate: {total_stats['duplicates']}")

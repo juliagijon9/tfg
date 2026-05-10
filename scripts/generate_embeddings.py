@@ -122,11 +122,10 @@ def main():
     cur = conn.cursor()
 
     cur.execute("""
-        SELECT distinct id, title, description, work_item_type, repro_steps, acceptance_criteria
-        FROM ado_work_items
-        WHERE id NOT IN (
-            SELECT work_item_id FROM ado_work_item_embeddings
-        )
+        SELECT distinct i.id, i.title, i.description, i.work_item_type, i.repro_steps, i.acceptance_criteria
+        FROM ado_work_items i
+        left join ado_work_item_embeddings ie on ie.work_item_id = i.id
+        where ie.work_item_id is null
     """)
     rows = cur.fetchall()
     print(f"📋 Tickets pendientes de embedding: {len(rows)}")

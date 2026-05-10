@@ -4,7 +4,6 @@ import os
 import re
 import sys
 import time
-from pathlib import Path
 
 import psycopg2
 from dotenv import load_dotenv
@@ -27,11 +26,23 @@ AZURE_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION")
 AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
 # ---------------------------
-# Prompt de clasificación
+# Carga del prompt desde BD
 # ---------------------------
-SYSTEM_PROMPT = (
-    Path(__file__).parent / "prompts" / "classification_prompt.txt"
-).read_text(encoding="utf-8")
+def load_prompt(conn, prompt_name: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT prompt_text FROM public.ado_config_prompt
+            WHERE prompt_name = %s
+              AND version = (
+                  SELECT MAX(version) FROM public.ado_config_prompt
+                  WHERE prompt_name = %s
+              );
+        """, (prompt_name, prompt_name))
+        row = cur.fetchone()
+    if not row:
+        print(f"❌ No se encontró el prompt '{prompt_name}' en ado_config_prompt")
+        sys.exit(1)
+    return row[0]
 
 # ---------------------------
 # Consulta de entrada
@@ -106,12 +117,12 @@ def build_ticket_text(row: dict) -> str:
 # ---------------------------
 # Llamada a Azure OpenAI
 # ---------------------------
-def classify_ticket(client, ticket_id: int, ticket_text: str) -> tuple[str, str]:
+def classify_ticket(client, ticket_id: int, ticket_text: str, prompt: str) -> tuple[str, str]:
     try:
         response = client.chat.completions.create(
             model=AZURE_DEPLOYMENT,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": prompt},
                 {"role": "user", "content": ticket_text},
             ],
             temperature=0.0,
@@ -164,7 +175,7 @@ def save_classification(conn, work_item_id: int, area: str,
 # ---------------------------
 # Procesamiento principal
 # ---------------------------
-def process_tickets(conn, client) -> None:
+def process_tickets(conn, client, prompt: str) -> None:
     with conn.cursor() as cur:
         cur.execute(QUERY)
         columns = [desc[0] for desc in cur.description]
@@ -175,7 +186,7 @@ def process_tickets(conn, client) -> None:
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
         ticket_text = build_ticket_text(row)
-        area, justification = classify_ticket(client, ticket_id, ticket_text)
+        area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)
         save_classification(conn, ticket_id, area, justification, AZURE_DEPLOYMENT)
         print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {area}")
         time.sleep(0.3)
@@ -199,7 +210,8 @@ def main() -> None:
         api_version=AZURE_API_VERSION,
     )
 
-    process_tickets(conn, client)
+    prompt = load_prompt(conn, "prompt_classification")
+    process_tickets(conn, client, prompt)
 
     conn.close()
     print("✅ Clasificación completada.")
