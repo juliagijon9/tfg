@@ -24,6 +24,7 @@ RELATED_THRESHOLD = float(os.getenv("RELATED_THRESHOLD", "0.80"))
 DUPLICATE_THRESHOLD = float(os.getenv("DUPLICATE_THRESHOLD", "0.90"))
 MAX_SOURCES = int(os.getenv("MAX_SOURCES", "5000"))
 DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
+NO_RELATION_TARGET_ID = 0
 
 
 # ---------------------------
@@ -69,14 +70,37 @@ def find_top_k(source_id: int, emb_map: dict[int, np.ndarray]) -> list[tuple[int
     return sims[:TOP_K]
 
 
+def save_no_relation_marker(source_id: int, cur) -> None:
+    cur.execute("""
+        INSERT INTO ado_work_item_relations (source_id, target_id, relation_type, similarity)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (source_id, target_id) DO UPDATE SET
+            relation_type = EXCLUDED.relation_type,
+            similarity    = EXCLUDED.similarity,
+            created_at    = CURRENT_TIMESTAMP
+    """, (source_id, NO_RELATION_TARGET_ID, None, None))
+
+
+def clear_no_relation_marker(source_id: int, cur) -> None:
+    cur.execute(
+        "DELETE FROM ado_work_item_relations WHERE source_id = %s AND target_id = %s",
+        (source_id, NO_RELATION_TARGET_ID),
+    )
+
+
 def process_single(source_id: int, emb_map: dict[int, np.ndarray], cur) -> dict:
     """Procesa un ticket: calcula similares y guarda relaciones. Devuelve stats."""
     stats = {"duplicates": 0, "related": 0, "skipped": 0}
 
     top = find_top_k(source_id, emb_map)
     if not top:
+        if not DRY_RUN:
+            save_no_relation_marker(source_id, cur)
+        else:
+            print(f"  [DRY-RUN] {source_id} → {NO_RELATION_TARGET_ID}  no relation")
         return stats
 
+    saved_relations = 0
     for wid, score in top:
         rel = decide_relation(score)
         if rel is None:
@@ -87,9 +111,11 @@ def process_single(source_id: int, emb_map: dict[int, np.ndarray], cur) -> dict:
             stats["duplicates"] += 1
         else:
             stats["related"] += 1
+        saved_relations += 1
 
         if DRY_RUN:
             print(f"  [DRY-RUN] {source_id} → {wid}  {rel}  score={score:.4f}")
+            print(f"  [DRY-RUN] limpiar marcador no-relation de {wid} si existe")
             continue
 
         cur.execute("""
@@ -100,6 +126,13 @@ def process_single(source_id: int, emb_map: dict[int, np.ndarray], cur) -> dict:
                 similarity    = EXCLUDED.similarity,
                 created_at    = CURRENT_TIMESTAMP
         """, (source_id, wid, rel, score))
+        clear_no_relation_marker(wid, cur)
+
+    if saved_relations == 0:
+        if DRY_RUN:
+            print(f"  [DRY-RUN] {source_id} → {NO_RELATION_TARGET_ID}  no relation")
+        else:
+            save_no_relation_marker(source_id, cur)
 
     return stats
 
@@ -124,17 +157,18 @@ def main():
         print(f"🔍 Modo single — SOURCE_ID={SOURCE_ID}")
     else:
         cur.execute("""
-            select id from
-            (
-            SELECT distinct i.id, i.changed_date
+            SELECT i.id
             FROM ado_work_items i
             JOIN ado_work_item_embeddings ie ON ie.work_item_id = i.id
-            left join ado_work_item_relations ir on ir.source_id=i.id
-            WHERE ir.source_id is null
-            ORDER BY i.changed_date DESC
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM ado_work_item_relations r
+                WHERE r.source_id = i.id
+                  AND r.target_id <> %s
             )
+            ORDER BY i.changed_date DESC
             LIMIT %s
-        """, (MAX_SOURCES,))
+        """, (NO_RELATION_TARGET_ID, MAX_SOURCES))
         source_ids = [row[0] for row in cur.fetchall()]
         print(f"📋 Modo batch — {len(source_ids)} tickets pendientes (MAX_SOURCES={MAX_SOURCES})")
 

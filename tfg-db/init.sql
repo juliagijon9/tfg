@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS ado_work_item_embeddings (
 
 CREATE TABLE IF NOT EXISTS ado_work_item_relations (
     source_id       BIGINT REFERENCES ado_work_items(id),
-    target_id       BIGINT REFERENCES ado_work_items(id),
-    relation_type   TEXT NOT NULL,
+    target_id       BIGINT,
+    relation_type   TEXT,
     similarity      DOUBLE PRECISION,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (source_id, target_id)
