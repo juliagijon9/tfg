@@ -1,53 +1,87 @@
+"""API FastAPI del asistente de triaje de tickets de Iberia Express."""
+
+import subprocess
+import sys
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 
 from backend.db import get_connection
 from backend.jobs import create_job, update_job, get_job
-from backend.services.sync_service import run_sync
-from backend.services.embedding_service import run_generate_embeddings
-from backend.services.similarity_service import find_top_k, save_relations
-from backend.services.metrics_service import get_metrics
-from backend.config import get_settings
-from backend.devops_client import fetch_recent_tickets
-from backend.db_client import fetch_tickets_after, upsert_intention
-from backend.intent_extractor import extract_intention
-from backend.models import WorkItem
-from backend.pipeline import triage_ticket
 
-app = FastAPI(title="TFG Backend API")
+app = FastAPI(title="TFG Triage API", version="1.0.0")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite todos los orígenes (ajusta para producción)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Ruta donde se montan los scripts en el contenedor
+SCRIPTS_DIR = "/scripts"
 
-# ----- Schemas -----
-
-class FindSimilarRequest(BaseModel):
-    source_id: int
-    top_k: int = 10
-
-
-class RelationItem(BaseModel):
-    target_id: int
-    relation_type: str
-    similarity: float
-
-
-class SaveRelationsRequest(BaseModel):
-    source_id: int
-    relations: list[RelationItem]
+# Orden y nombres de los pasos del pipeline
+PIPELINE_STEPS = [
+    "sync_ado_to_postgres.py",
+    "generate_embeddings.py",
+    "link_related.py",
+    "extract_intention.py",
+    "classify_tickets.py",
+    "tag_tickets.py",
+]
 
 
-# ----- Health -----
+# ---------------------------
+# Helpers internos
+# ---------------------------
+
+def _run_script(script_name: str) -> tuple[bool, str]:
+    """Ejecuta un script Python y devuelve (éxito, salida)."""
+    path = f"{SCRIPTS_DIR}/{script_name}"
+    result = subprocess.run(
+        [sys.executable, path],
+        capture_output=True,
+        text=True,
+    )
+    output = result.stdout
+    if result.stderr:
+        output += f"\n[STDERR]\n{result.stderr}"
+    return result.returncode == 0, output
+
+
+def _run_steps_job(job_id: str, steps: list[str]) -> None:
+    """Ejecuta una lista de pasos secuencialmente y actualiza el job."""
+    update_job(job_id, status="running")
+    steps_output = []
+
+    for step in steps:
+        success, output = _run_script(step)
+        steps_output.append({"step": step, "output": output, "ok": success})
+
+        if not success:
+            update_job(
+                job_id,
+                status="failed",
+                error=f"Falló el paso: {step}",
+                result={"steps": steps_output},
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+            return
+
+    update_job(
+        job_id,
+        status="completed",
+        result={"steps": steps_output},
+        finished_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+# ---------------------------
+# Health
+# ---------------------------
 
 @app.get("/health")
 def health():
@@ -60,203 +94,105 @@ def health():
     return {"status": "ok", "db_connected": db_ok}
 
 
-@app.get("/work-items/count")
-def work_items_count():
-    conn = get_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM ado_work_items")
-        count = cur.fetchone()[0]
-        cur.close()
-        return {"count": count}
-    finally:
-        conn.close()
-
-
-# ----- Background job helpers -----
-
-def _run_sync_job(job_id: str):
-    update_job(job_id, status="running")
-    try:
-        result = run_sync()
-        update_job(
-            job_id,
-            status="completed",
-            result=result,
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-    except Exception as e:
-        update_job(
-            job_id,
-            status="failed",
-            error=str(e),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-
-def _run_embeddings_job(job_id: str):
-    update_job(job_id, status="running")
-    try:
-        result = run_generate_embeddings()
-        update_job(
-            job_id,
-            status="completed",
-            result=result,
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-    except Exception as e:
-        update_job(
-            job_id,
-            status="failed",
-            error=str(e),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-
-# ----- Jobs -----
-
-@app.post("/jobs/sync")
-def start_sync(bg: BackgroundTasks):
-    job_id = create_job("sync")
-    bg.add_task(_run_sync_job, job_id)
-    return {"job_id": job_id}
-
-
-@app.post("/jobs/embeddings")
-def start_embeddings(bg: BackgroundTasks):
-    job_id = create_job("embeddings")
-    bg.add_task(_run_embeddings_job, job_id)
-    return {"job_id": job_id}
-
+# ---------------------------
+# Jobs
+# ---------------------------
 
 @app.get("/jobs/{job_id}")
 def job_status(job_id: str):
     job = get_job(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise HTTPException(status_code=404, detail="Job no encontrado")
     return job
 
 
-# ----- Similarity -----
+# ---------------------------
+# Pipeline — pasos individuales
+# ---------------------------
 
-@app.post("/similarity/find")
-def similarity_find(req: FindSimilarRequest):
-    results = find_top_k(req.source_id, req.top_k)
-    if results is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No embedding found for work_item_id={req.source_id}",
-        )
-    return {"source_id": req.source_id, "results": results}
-
-
-# ----- Relations -----
-
-@app.post("/relations/save")
-def relations_save(req: SaveRelationsRequest):
-    rels = [r.model_dump() for r in req.relations]
-    result = save_relations(req.source_id, rels)
-    return result
-
-
-# ----- Metrics -----
-
-@app.get("/metrics")
-def metrics():
-    return get_metrics()
-
-
-# ----- Classify -----
-
-def _run_classify_job(job_id: str, top: int) -> None:
-    update_job(job_id, status="running")
-    try:
-        settings = get_settings()
-        tickets = fetch_recent_tickets(top=top, settings=settings)
-        items = []
-        for ticket in tickets:
-            # Convierte Ticket (ADO) a WorkItem mínimo para el pipeline
-            work_item = WorkItem(
-                id=ticket.id,
-                work_item_type="Unknown",
-                title=ticket.title,
-                created_date=datetime.now(timezone.utc),
-                description=ticket.description or None,
-            )
-            result = triage_ticket(work_item, settings)
-            items.append({
-                "id": ticket.id,
-                "title": ticket.title,
-                "area": result.classification.area,
-                "justification": result.classification.justification,
-            })
-        update_job(
-            job_id,
-            status="completed",
-            result={"items": items},
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-    except Exception as e:
-        update_job(
-            job_id,
-            status="failed",
-            error=str(e),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-
-@app.post("/jobs/classify")
-def start_classify(bg: BackgroundTasks, top: int = Query(default=10, ge=1, le=50)):
-    job_id = create_job("classify")
-    bg.add_task(_run_classify_job, job_id, top)
+@app.post("/pipeline/sync")
+def pipeline_sync(bg: BackgroundTasks):
+    """Sincroniza tickets de Azure DevOps → PostgreSQL."""
+    job_id = create_job("sync")
+    bg.add_task(_run_steps_job, job_id, ["sync_ado_to_postgres.py"])
     return {"job_id": job_id}
 
 
-# ----- Extract Intention -----
-
-def _run_extract_intention_job(job_id: str, since: str, limit: int | None) -> None:
-    update_job(job_id, status="running")
-    try:
-        settings = get_settings()
-        work_items = fetch_tickets_after(cutoff_date=since, settings=settings)
-        if limit is not None:
-            work_items = work_items[:limit]
-        items = []
-        for wi in work_items:
-            intention = extract_intention(wi, settings)
-            upsert_intention(
-                work_item_id=wi.id,
-                intention=intention.intention,
-                model=settings.AZURE_OPENAI_DEPLOYMENT,
-                settings=settings,
-            )
-            items.append({
-                "id": wi.id,
-                "work_item_type": wi.work_item_type,
-                "title": wi.title,
-                "intention": intention.intention,
-            })
-        update_job(
-            job_id,
-            status="completed",
-            result={"items": items},
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
-    except Exception as e:
-        update_job(
-            job_id,
-            status="failed",
-            error=str(e),
-            finished_at=datetime.now(timezone.utc).isoformat(),
-        )
+@app.post("/pipeline/embeddings")
+def pipeline_embeddings(bg: BackgroundTasks):
+    """Genera embeddings para los tickets sin embedding."""
+    job_id = create_job("embeddings")
+    bg.add_task(_run_steps_job, job_id, ["generate_embeddings.py"])
+    return {"job_id": job_id}
 
 
-@app.post("/jobs/extract-intention")
-def start_extract_intention(
-    bg: BackgroundTasks,
-    since: str = Query(default="2026-04-30", description="Fecha de corte YYYY-MM-DD"),
-    limit: int | None = Query(default=10, ge=1, le=100),
-):
+@app.post("/pipeline/link-related")
+def pipeline_link_related(bg: BackgroundTasks):
+    """Detecta tickets duplicados y relacionados por similitud."""
+    job_id = create_job("link-related")
+    bg.add_task(_run_steps_job, job_id, ["link_related.py"])
+    return {"job_id": job_id}
+
+
+@app.post("/pipeline/extract-intention")
+def pipeline_extract_intention(bg: BackgroundTasks):
+    """Extrae la intención de los tickets sin intención."""
     job_id = create_job("extract-intention")
-    bg.add_task(_run_extract_intention_job, job_id, since, limit)
+    bg.add_task(_run_steps_job, job_id, ["extract_intention.py"])
     return {"job_id": job_id}
+
+
+@app.post("/pipeline/classify")
+def pipeline_classify(bg: BackgroundTasks):
+    """Clasifica los tickets con intención extraída."""
+    job_id = create_job("classify")
+    bg.add_task(_run_steps_job, job_id, ["classify_tickets.py"])
+    return {"job_id": job_id}
+
+
+@app.post("/pipeline/tag")
+def pipeline_tag(bg: BackgroundTasks):
+    """Asigna tags a los tickets clasificados."""
+    job_id = create_job("tag")
+    bg.add_task(_run_steps_job, job_id, ["tag_tickets.py"])
+    return {"job_id": job_id}
+
+
+# ---------------------------
+# Pipeline — ejecución completa
+# ---------------------------
+
+@app.post("/pipeline/run-all")
+def pipeline_run_all(bg: BackgroundTasks):
+    """Ejecuta el pipeline completo de triaje en orden."""
+    job_id = create_job("run-all")
+    bg.add_task(_run_steps_job, job_id, PIPELINE_STEPS)
+    return {"job_id": job_id}
+
+
+# ---------------------------
+# Estadísticas básicas
+# ---------------------------
+
+@app.get("/stats")
+def stats():
+    """Devuelve contadores de las tablas principales."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        result = {}
+        tables = {
+            "tickets": "ado_work_items",
+            "embeddings": "ado_work_item_embeddings",
+            "intentions": "ado_work_item_intentions",
+            "classifications": "ado_work_item_classifications",
+            "tags": "ado_work_item_tag",
+            "relations": "ado_work_item_relations",
+        }
+        for key, table in tables.items():
+            cur.execute(f"SELECT COUNT(*) FROM {table}")
+            result[key] = cur.fetchone()[0]
+        cur.close()
+        return result
+    finally:
+        conn.close()
