@@ -23,25 +23,80 @@ except Exception:
     stats = {}
 
 col1, col2, col3, col4, col5, col6 = st.columns(6)
-col1.metric("Tickets", f"{stats.get('tickets', '—'):,}" if stats else "—")
-col2.metric("Embeddings", f"{stats.get('embeddings', '—'):,}" if stats else "—")
-col3.metric("Intenciones", f"{stats.get('intentions', '—'):,}" if stats else "—")
-col4.metric("Clasificados", f"{stats.get('classifications', '—'):,}" if stats else "—")
-col5.metric("Tags", f"{stats.get('tags', '—'):,}" if stats else "—")
-col6.metric("Relaciones", f"{stats.get('relations', '—'):,}" if stats else "—")
+col1.metric("Tickets", f"{stats.get('tickets', 0):,}" if stats else "—")
+col2.metric("Embeddings", f"{stats.get('embeddings', 0):,}" if stats else "—")
+col3.metric("Relaciones", f"{stats.get('relations', 0):,}" if stats else "—")
+col4.metric("Intenciones", f"{stats.get('intentions', 0):,}" if stats else "—")
+col5.metric("Clasificados", f"{stats.get('classifications', 0):,}" if stats else "—")
+col6.metric("Tags", f"{stats.get('tags', 0):,}" if stats else "—")
 
 st.markdown("---")
 
-# --- Estado del backend ---
+# --- Estado del backend y jobs activos ---
 try:
     h = requests.get(f"{BACKEND_URL}/health", timeout=3)
     health = h.json()
-    if health.get("db_connected"):
-        st.success("✅ Backend y base de datos operativos")
-    else:
-        st.error("❌ Backend activo pero sin conexión a la BD")
+    db_ok = health.get("db_connected", False)
 except Exception:
+    db_ok = False
+
+if db_ok:
+    st.success("✅ Backend y base de datos operativos")
+else:
     st.error("❌ No se puede conectar con el backend")
+
+# --- Jobs activos y recientes ---
+STEP_LABELS = {
+    "sync": "🔁 Sincronizar ADO → BD",
+    "embeddings": "🧮 Generar Embeddings",
+    "link-related": "🔗 Detectar Relacionados",
+    "extract-intention": "🧠 Extraer Intención",
+    "classify": "🏷️ Clasificar",
+    "tag": "🔖 Asignar Tags",
+    "run-all": "🚀 Pipeline completo",
+}
+
+STATUS_BADGE = {
+    "completed": "✅",
+    "failed": "❌",
+    "running": "⏳",
+    "pending": "🕐",
+}
+
+try:
+    rj = requests.get(f"{BACKEND_URL}/jobs?limit=10", timeout=5)
+    jobs = rj.json() if rj.ok else []
+except Exception:
+    jobs = []
+
+running = [j for j in jobs if j["status"] == "running"]
+
+st.markdown("---")
+
+if running:
+    for job in running:
+        label = STEP_LABELS.get(job["type"], job["type"])
+        st.warning(f"⏳ **En curso:** {label} — Job `{job['job_id'][:8]}…`")
+else:
+    st.info("💤 No hay procesos en ejecución.")
+
+st.subheader("Últimas 10 ejecuciones")
+if jobs:
+    for job in jobs:
+        label = STEP_LABELS.get(job["type"], job["type"])
+        badge = STATUS_BADGE.get(job["status"], "❓")
+        started = job.get("started_at", "")[:16].replace("T", " ")
+        finished = job.get("finished_at", "")
+        finished_str = finished[:16].replace("T", " ") if finished else "—"
+        error = f" — ⚠️ {job['error'][:60]}" if job.get("error") else ""
+        st.caption(
+            f"{badge} **{label}** &nbsp;|&nbsp; "
+            f"Inicio: {started} &nbsp;|&nbsp; "
+            f"Fin: {finished_str}"
+            f"{error} &nbsp;|&nbsp; `{job['job_id'][:8]}…`"
+        )
+else:
+    st.caption("Sin ejecuciones registradas.")
 
 st.markdown("---")
 st.info(
