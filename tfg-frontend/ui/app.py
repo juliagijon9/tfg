@@ -22,13 +22,14 @@ try:
 except Exception:
     stats = {}
 
-col1, col2, col3, col4, col5, col6 = st.columns(6)
+col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 col1.metric("Tickets", f"{stats.get('tickets', 0):,}" if stats else "—")
 col2.metric("Embeddings", f"{stats.get('embeddings', 0):,}" if stats else "—")
 col3.metric("Relaciones", f"{stats.get('relations', 0):,}" if stats else "—")
 col4.metric("Intenciones", f"{stats.get('intentions', 0):,}" if stats else "—")
 col5.metric("Clasificados", f"{stats.get('classifications', 0):,}" if stats else "—")
 col6.metric("Tags", f"{stats.get('tags', 0):,}" if stats else "—")
+col7.metric("Último ID", f"{stats.get('max_id', 0):,}" if stats else "—")
 
 st.markdown("---")
 
@@ -80,6 +81,7 @@ if running:
 else:
     st.info("💤 No hay procesos en ejecución.")
 
+st.markdown("---")
 st.subheader("Últimas 10 ejecuciones")
 if jobs:
     for job in jobs:
@@ -88,13 +90,24 @@ if jobs:
         started = job.get("started_at", "")[:16].replace("T", " ")
         finished = job.get("finished_at", "")
         finished_str = finished[:16].replace("T", " ") if finished else "—"
-        error = f" — ⚠️ {job['error'][:60]}" if job.get("error") else ""
-        st.caption(
-            f"{badge} **{label}** &nbsp;|&nbsp; "
-            f"Inicio: {started} &nbsp;|&nbsp; "
-            f"Fin: {finished_str}"
-            f"{error} &nbsp;|&nbsp; `{job['job_id'][:8]}…`"
+        error_str = f" — ⚠️ {job['error'][:80]}" if job.get("error") else ""
+
+        result = job.get("result") or {}
+        steps = result.get("steps", []) if isinstance(result, dict) else []
+        output_text = "\n\n".join(
+            s["output"].strip() for s in steps if s.get("output", "").strip()
         )
+
+        header = (
+            f"{badge} **{label}** &nbsp;|&nbsp; "
+            f"{started} → {finished_str}"
+            f"{error_str} &nbsp;|&nbsp; `{job['job_id'][:8]}…`"
+        )
+        if output_text:
+            with st.expander(header):
+                st.code(output_text, language=None)
+        else:
+            st.markdown(header)
 else:
     st.caption("Sin ejecuciones registradas.")
 

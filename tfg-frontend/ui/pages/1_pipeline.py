@@ -48,18 +48,27 @@ def poll_job(job_id: str, label: str):
         status = job.get("status")
         if status == "completed":
             placeholder.empty()
+            output_lines = []
             for s in job.get("result", {}).get("steps", []):
                 if s.get("output", "").strip():
-                    st.code(s["output"].strip(), language=None)
-            st.success(f"✅ {label} completado")
+                    output_lines.append(s["output"].strip())
+            combined = "\n\n".join(output_lines)
+            st.session_state["last_job_output"] = combined
+            st.session_state["last_job_label"] = label
+            st.session_state["last_job_ok"] = True
             st.rerun()
             return
         elif status == "failed":
             placeholder.empty()
-            st.error(f"❌ {label} falló: {job.get('error', '')}")
+            output_lines = []
             for s in job.get("result", {}).get("steps", []):
                 if not s.get("ok") and s.get("output", "").strip():
-                    st.code(s["output"].strip(), language=None)
+                    output_lines.append(s["output"].strip())
+            combined = "\n\n".join(output_lines)
+            st.session_state["last_job_output"] = combined
+            st.session_state["last_job_label"] = label
+            st.session_state["last_job_ok"] = False
+            st.session_state["last_job_error"] = job.get("error", "")
             st.rerun()
             return
         else:
@@ -114,18 +123,32 @@ if running_jobs:
 else:
     st.success("✅ No hay procesos en ejecución.")
 
-# Historial reciente
-with st.expander("📋 Historial de ejecuciones"):
-    if jobs:
-        for job in jobs:
-            label = STEP_LABELS.get(job["type"], job["type"])
-            badge = status_badge(job["status"])
-            started = job.get("started_at", "")[:16].replace("T", " ")
-            st.caption(f"{badge} **{label}** — {job['status']} — {started} — `{job['job_id'][:8]}…`")
-    else:
-        st.caption("Sin ejecuciones registradas.")
-
 st.markdown("---")
+
+# ---------------------------
+# Resultado de la última ejecución
+# ---------------------------
+if "last_job_output" in st.session_state:
+    label = st.session_state.get("last_job_label", "")
+    ok = st.session_state.get("last_job_ok", True)
+    output = st.session_state.get("last_job_output", "")
+    error = st.session_state.get("last_job_error", "")
+
+    if ok:
+        st.success(f"✅ {label} completado")
+    else:
+        st.error(f"❌ {label} falló: {error}")
+
+    if output:
+        with st.expander("📋 Ver output", expanded=True):
+            st.code(output, language=None)
+
+    if st.button("✖ Cerrar resultado"):
+        for key in ("last_job_output", "last_job_label", "last_job_ok", "last_job_error"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
+    st.markdown("---")
 
 # ---------------------------
 # Pasos individuales

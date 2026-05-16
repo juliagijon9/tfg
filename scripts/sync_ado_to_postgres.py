@@ -38,9 +38,25 @@ def get_headers(pat: str) -> dict:
 
 
 # ---------------------------
+# 0. Obtener el max ID ya sincronizado
+# ---------------------------
+def get_max_synced_id() -> int:
+    conn = psycopg2.connect(
+        host=PG_HOST, port=PG_PORT, dbname=PG_DB, user=PG_USER, password=PG_PASS
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(id) FROM ado_work_items")
+            row = cur.fetchone()
+            return row[0] if row and row[0] else 0
+    finally:
+        conn.close()
+
+
+# ---------------------------
 # 1. Obtener IDs con WIQL
 # ---------------------------
-def wiql_get_ids() -> list[int]:
+def wiql_get_ids(min_id: int) -> list[int]:
     url = f"https://dev.azure.com/{ORG}/{PROJECT}/_apis/wit/wiql?api-version={API_VERSION_WIQL}"
 
     wiql = {
@@ -48,9 +64,8 @@ def wiql_get_ids() -> list[int]:
         SELECT [System.Id]
         FROM WorkItems
         WHERE [System.TeamProject] = '{PROJECT}'
-          AND [System.State] <> 'Closed'
-          AND [System.ChangedDate] >= @Today - 15
-        ORDER BY [System.ChangedDate] DESC
+          AND [System.Id] > {min_id}
+        ORDER BY [System.Id] ASC
         """
     }
 
@@ -185,7 +200,10 @@ def main():
 
     ensure_table(conn)
 
-    ids = wiql_get_ids()
+    max_id = get_max_synced_id()
+    print(f"📌 Max ID sincronizado: {max_id}")
+
+    ids = wiql_get_ids(max_id)
     print(f"IDs encontrados: {len(ids)}")
 
     fields = [
