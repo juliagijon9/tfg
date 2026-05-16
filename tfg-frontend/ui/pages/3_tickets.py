@@ -184,3 +184,26 @@ else:
                 "acceptance_criteria": d.get("acceptance_criteria") or d.get("acceptance_criteria_dup"),
             }
             render_ticket_fields(dup_ticket, use_expanders=False)
+
+# ---------------------------
+# Sección final — Recalcular IA
+# ---------------------------
+st.markdown("---")
+col_btn, col_info = st.columns([1, 3])
+with col_btn:
+    recalcular = st.button("🔄 Recalcular IA", type="primary", use_container_width=True)
+with col_info:
+    st.caption("Elimina todos los datos generados por la IA para este ticket (embeddings, relaciones, intención, clasificación y tags). El próximo pipeline lo reprocesará completo.")
+
+if recalcular:
+    with st.spinner("Eliminando datos de IA…"):
+        try:
+            r = requests.delete(f"{BACKEND_URL}/tickets/{ticket['id']}/ia", timeout=10)
+            if r.ok:
+                st.success(f"✅ Datos de IA del ticket #{ticket['id']} eliminados. El próximo pipeline lo reprocesará.")
+                st.session_state.pop("ticket_data", None)
+                st.rerun()
+            else:
+                st.error(f"Error: {r.json().get('detail', 'Error desconocido')}")
+        except Exception as e:
+            st.error(str(e))

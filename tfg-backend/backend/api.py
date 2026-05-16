@@ -107,7 +107,7 @@ def _list_jobs(limit: int = 20) -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT job_id, type, status, error, started_at, finished_at
+                SELECT job_id, type, status, error, started_at, finished_at, result
                 FROM pipeline_jobs
                 ORDER BY started_at DESC
                 LIMIT %s
@@ -120,6 +120,7 @@ def _list_jobs(limit: int = 20) -> list[dict]:
             "job_id": r[0], "type": r[1], "status": r[2], "error": r[3],
             "started_at": r[4].isoformat() if r[4] else None,
             "finished_at": r[5].isoformat() if r[5] else None,
+            "result": r[6],
         }
         for r in rows
     ]
@@ -507,6 +508,23 @@ def get_ticket_triage(ticket_id: int):
     return d
 
 
+@app.delete("/tickets/{ticket_id}/ia")
+def reset_ticket_ia(ticket_id: int):
+    """Borra todos los datos generados por la IA para un ticket concreto."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM ado_work_item_embeddings WHERE work_item_id = %s", (ticket_id,))
+            cur.execute("DELETE FROM ado_work_item_relations WHERE source_id = %s", (ticket_id,))
+            cur.execute("DELETE FROM ado_work_item_intentions WHERE work_item_id = %s", (ticket_id,))
+            cur.execute("DELETE FROM ado_work_item_classifications WHERE work_item_id = %s", (ticket_id,))
+            cur.execute("DELETE FROM ado_work_item_tag WHERE work_item_id = %s", (ticket_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "ticket_id": ticket_id}
+
+
 # ---------------------------
 # Estadísticas
 # ---------------------------
@@ -528,6 +546,8 @@ def stats():
         for key, table in tables.items():
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             result[key] = cur.fetchone()[0]
+        cur.execute("SELECT MAX(id) FROM ado_work_items")
+        result["max_id"] = cur.fetchone()[0] or 0
         cur.close()
         return result
     finally:

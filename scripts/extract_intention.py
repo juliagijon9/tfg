@@ -30,7 +30,6 @@ AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "chat-tfg")
 # ---------------------------
 # Script configuration
 # ---------------------------
-CUTOFF_DATE = "2026-04-30"   # Procesa tickets creados después de esta fecha
 DELAY_BETWEEN_CALLS = 0.3    # Segundos entre llamadas a la API (evita rate limit)
 
 # ---------------------------
@@ -79,18 +78,25 @@ def get_db_connection():
 # ---------------------------
 # 1. Obtener tickets de la BD
 # ---------------------------
-def fetch_tickets(cutoff_date):
+def fetch_tickets():
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT i.id, i.work_item_type, i.title, i.description, i.repro_steps, i.acceptance_criteria, i.tags
+        SELECT DISTINCT
+            i.id,
+            i.work_item_type,
+            i.title,
+            i.area_path,
+            i.iteration_path,
+            i.tags,
+            i.description,
+            i.repro_steps,
+            i.acceptance_criteria
         FROM public.ado_work_items i
-        left join ado_work_item_intentions II on II.work_item_id = i.id
-        WHERE
-        created_date > %s and
-        ii.work_item_id is null
-        ORDER BY created_date DESC
-    """, (cutoff_date,))
+        LEFT JOIN ado_work_item_intentions ii ON ii.work_item_id = i.id
+        WHERE ii.work_item_id IS NULL
+        ORDER BY i.id DESC
+    """)
     rows = cur.fetchall()
     cur.close()
     conn.close()
@@ -101,7 +107,7 @@ def fetch_tickets(cutoff_date):
 # ---------------------------
 # 2. Llamar a Azure OpenAI
 # ---------------------------
-def extract_intention(work_item_type, title, description, repro_steps, acceptance_criteria, tags, prompt: str):
+def extract_intention(work_item_type, title, area_path, iteration_path, tags, description, repro_steps, acceptance_criteria, prompt: str):
     client = AzureOpenAI(
         azure_endpoint=AZURE_ENDPOINT,
         api_key=AZURE_KEY,
@@ -111,6 +117,8 @@ def extract_intention(work_item_type, title, description, repro_steps, acceptanc
     user_payload = (
         f"Tipo: {work_item_type}\n"
         f"Título: {title}\n"
+        f"Área: {area_path or '(sin área)'}\n"
+        f"Iteración: {iteration_path or '(sin iteración)'}\n"
         f"Etiquetas: {tags or '(ninguna)'}\n"
         f"Descripción: {strip_html(description) or '(sin descripción)'}\n"
         f"Pasos para reproducir: {strip_html(repro_steps) or '(no aplican)'}\n"
@@ -161,11 +169,10 @@ def upsert_intention(work_item_id, intention, model):
 def main():
     t_start = time.time()
     print(f"🔧 Modelo: {AZURE_DEPLOYMENT}")
-    print(f"📅 Fecha de corte: {CUTOFF_DATE}")
 
     prompt = load_prompt("prompt_intention")
 
-    tickets = fetch_tickets(CUTOFF_DATE)
+    tickets = fetch_tickets()
     if not tickets:
         print("✅ Nada que procesar.")
         return
@@ -174,11 +181,11 @@ def main():
     errors = 0
 
     for row in tickets:
-        work_item_id, work_item_type, title, description, repro_steps, acceptance_criteria, tags = row
+        work_item_id, work_item_type, title, area_path, iteration_path, tags, description, repro_steps, acceptance_criteria = row
         try:
             intention = extract_intention(
-                work_item_type, title, description,
-                repro_steps, acceptance_criteria, tags, prompt
+                work_item_type, title, area_path, iteration_path,
+                tags, description, repro_steps, acceptance_criteria, prompt
             )
             upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT)
             processed += 1
