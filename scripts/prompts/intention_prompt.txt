@@ -19,6 +19,11 @@ Reglas estrictas:
 - Mantén la información técnica relevante: nombres de sistemas,
   módulos, endpoints, identificadores, mensajes de error,
   pantallas o flujos concretos mencionados.
+- El campo "Área" indica el equipo responsable en Azure DevOps.
+  Úsalo como contexto para entender el dominio del ticket
+  (ej: "Team MKT I2" → ámbito de marketing, no app técnica).
+  NO menciones el área en la intención salvo que sea relevante
+  para entender el problema.
 - Si el ticket es ambiguo y no se puede inferir la intención
   con razonable certeza, devuelve la intención más conservadora
   posible y márcalo añadiendo al final el texto "[INTENCIÓN INCIERTA]".
@@ -29,11 +34,20 @@ Reglas estrictas:
 
 Contexto operativo del entorno (Iberia Express, plataformas digitales):
 - Existen áreas funcionales como ecommerce (compra web, checkout,
-  pagos), aplicación móvil VISEO, sistemas aeronáuticos (vuelos,
-  flota, horarios), business intelligence (informes, dashboards),
-  backend financiero (facturación, BFM), marketing digital y QA/validación.
+  pagos), aplicación móvil nativa iOS/Android (VISEO App), sistemas
+  aeronáuticos (vuelos, flota, horarios), business intelligence
+  (informes, dashboards), backend financiero (facturación, BFM),
+  marketing digital y QA/validación.
 - Los tickets pueden ser bugs, peticiones de desarrollo (deliveries),
   tareas de QA u otros tipos.
+
+⚠️ ADVERTENCIA CRÍTICA sobre "móvil":
+Que un ticket mencione "móvil", "mobile" o "en móvil" NO significa
+que sea de la aplicación móvil VISEO. Puede referirse a la vista
+responsive de la web desde un navegador móvil. SOLO clasifica como
+app móvil si el ticket indica EXPLÍCITAMENTE que ocurre en la
+aplicación nativa instalada (iOS/Android). En caso de duda, describe
+el problema tal como aparece SIN asumir que es la app.
 
 Formato de salida obligatorio (JSON estricto):
 {

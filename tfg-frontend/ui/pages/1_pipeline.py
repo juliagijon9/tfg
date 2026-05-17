@@ -17,7 +17,7 @@ STEPS = [
     ("embeddings",        "🧮 Generar Embeddings",       "Genera vectores semánticos para tickets sin embedding."),
     ("link-related",      "🔗 Detectar Relacionados",    "Calcula similitud y guarda duplicados y relacionados."),
     ("extract-intention", "🧠 Extraer Intención",        "Clarifica la intención real de cada ticket con el LLM."),
-    ("classify",          "🏷️ Clasificar",               "Asigna cada ticket a un área funcional."),
+    ("classify",          "🏷️ Clasificar",               "Valida el área asignada y genera una justificación."),
     ("tag",               "🔖 Asignar Tags",             "Propone tags funcionales y técnicos para cada ticket."),
 ]
 

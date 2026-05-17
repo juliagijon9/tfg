@@ -123,7 +123,14 @@ with st.expander("🧠 Intención, Clasificación y Tags", expanded=False):
     else:
         st.markdown("**Intención**")
         st.info(triage.get("intention") or "—")
-        st.caption(f"Extraído: {(triage.get('extracted_at') or '')[:16].replace('T', ' ')}")
+        nivel_id = triage.get("nivel_confianza_id")
+        nivel_dec = triage.get("nivel_confianza_dec") or "—"
+        colores = {4: "🟢", 3: "🟡", 2: "🟠", 1: "🔴"}
+        icono = colores.get(nivel_id, "⚪")
+        st.caption(
+            f"Extraído: {(triage.get('extracted_at') or '')[:16].replace('T', ' ')} "
+            f"&nbsp;·&nbsp; Confianza en la intención: {icono} **{nivel_dec}**"
+        )
 
         st.markdown("---")
         st.markdown("**Clasificación**")

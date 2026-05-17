@@ -48,8 +48,7 @@ def load_prompt(conn, prompt_name: str) -> str:
 # Consulta de entrada
 # ---------------------------
 QUERY = """
-    SELECT
-	distinct
+    SELECT DISTINCT
         i.id,
         i.work_item_type,
         i.title,
@@ -60,20 +59,18 @@ QUERY = """
         i.repro_steps,
         i.acceptance_criteria,
         ii.intention,
-        ic.area,
-        ic.justification
+        CASE
+            WHEN ii.nivel_confianza = 1 THEN 'Crítico/Nulo'
+            WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
+            WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
+            WHEN ii.nivel_confianza = 4 THEN 'Excelente'
+        END AS nivel_confianza
     FROM public.ado_work_items i
-    LEFT JOIN public.ado_work_item_intentions ii
-        ON ii.work_item_id = i.id
-    LEFT JOIN public.ado_work_item_classifications ic
-        ON ic.work_item_id = i.id
-	LEFT JOIN public.ado_work_item_tag it
-		on it.work_item_id = i.id
+    LEFT JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
+    LEFT JOIN public.ado_work_item_tag it ON it.work_item_id = i.id
     WHERE
-        i.created_date > '2026-04-30'
-        AND ii.work_item_id IS NOT NULL
-        AND ic.work_item_id IS NOT NULL
-		AND it.work_item_id IS NULL
+        ii.work_item_id IS NOT NULL
+        AND it.work_item_id IS NULL
     ORDER BY i.id;
 """
 
@@ -112,14 +109,14 @@ def build_ticket_text(row: dict) -> str:
     return (
         f"Tipo: {row['work_item_type'] or '(sin datos)'}\n"
         f"Título: {row['title'] or '(sin datos)'}\n"
-        f"Área actual en DevOps: {row['area_path'] or '(sin datos)'}\n"
+        f"Área asignada en Azure DevOps: {row['area_path'] or '(sin datos)'}\n"
+        f"Iteración: {row['iteration_path'] or '(sin datos)'}\n"
         f"Etiquetas actuales en DevOps: {row['tags'] or '(sin datos)'}\n"
         f"Descripción: {clean_html(row['description'])}\n"
         f"Pasos para reproducir: {clean_html(row['repro_steps'])}\n"
         f"Criterios de aceptación: {clean_html(row['acceptance_criteria'])}\n"
-        f"Intencionalidad extraída: {row['intention'] or '(sin datos)'}\n"
-        f"Área asignada por el clasificador: {row['area'] or '(sin datos)'}\n"
-        f"Justificación del clasificador: {row['justification'] or '(sin datos)'}"
+        f"Intención extraída: {row['intention'] or '(sin datos)'}\n"
+        f"Nivel de confianza de la intención (1=crítico, 4=excelente): {row['nivel_confianza'] or '(sin datos)'}"
     )
 
 

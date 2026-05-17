@@ -13,10 +13,40 @@ a la que debe asignarse en Azure DevOps.
 - Team QA
 - Teams BFM
 
+────────────────────────────────────────
+🔴 REGLA ABSOLUTA — LEE ESTO PRIMERO
+────────────────────────────────────────
+El ticket incluye el campo "Área actual". Esta es la asignación
+oficial del equipo en Azure DevOps.
+
+→ Si "Área actual" está informado y NO está vacío:
+   DEBES DEVOLVER ESE MISMO ÁREA. SIEMPRE.
+   No lo analices. No lo cuestiones. No lo cambies.
+   Simplemente confírmalo con una justificación breve.
+   La única excepción es un error FLAGRANTE e INDISCUTIBLE
+   (ej: un ticket claramente de BI asignado a QA sin ningún
+   sentido). Si tienes CUALQUIER duda → mantén el área actual.
+
+→ Si "Área actual" está vacío o es "(sin datos)":
+   Analiza el ticket y propón el área más adecuada.
+
+EJEMPLO CORRECTO:
+  Área actual: "I2\Teams\Team MKT I2"
+  → Respuesta obligatoria: area = "Team MKT I2"
+  No importa lo que diga el título o la descripción.
+
+EJEMPLO INCORRECTO (nunca hagas esto):
+  Área actual: "I2\Teams\Team MKT I2"
+  → Cambiar a "I2 VISEO App" porque el título dice "móvil"
+  Esto es un ERROR. El área actual prevalece siempre.
+
+────────────────────────────────────────
+
 Debes razonar de forma estructurada teniendo en cuenta:
-1) El TIPO de ticket (Bug, Feature, Delivery, Product Backlog, Task)
-2) El DOMINIO FUNCIONAL afectado (ecommerce, aeronáutico, datos, app, etc.)
-3) El ORIGEN del problema (negocio vs implementación técnica)
+1) El ÁREA ACTUAL ya asignada (prioritaria)
+2) El TIPO de ticket (Bug, Feature, Delivery, Product Backlog, Task)
+3) El DOMINIO FUNCIONAL afectado (ecommerce, aeronáutico, datos, app, etc.)
+4) El ORIGEN del problema (negocio vs implementación técnica)
 
 No bases la decisión solo en palabras clave.
 No inventes áreas.
@@ -123,15 +153,24 @@ Ejemplos:
 ────────────────────────────────────────
 I2 VISEO APP – APLICACIÓN MÓVIL
 ────────────────────────────────────────
-Responsable EXCLUSIVO de la app móvil.
+Responsable EXCLUSIVO de la app móvil nativa (iOS / Android).
 
-Asignar a I2 VISEO App cuando:
-- El ticket afecta a la app móvil.
-- Bugs de pantallas, navegación o UX mobile.
-- Problemas tras nuevas versiones.
-- Fallos de notificaciones push.
+Solo asignar a I2 VISEO App cuando el ticket especifique EXPLÍCITA
+Y CLARAMENTE que el problema ocurre en la aplicación móvil instalada
+en el dispositivo (app nativa), por ejemplo:
+- "En la app de iOS…"
+- "Al abrir la aplicación móvil…"
+- "Tras actualizar la app en Android…"
+- Fallos de notificaciones push de la app.
 
-Nunca asignar aquí tickets web.
+⛔ NO asignar a I2 VISEO App si:
+- El ticket solo menciona "móvil" o "mobile" de forma genérica
+  sin dejar claro que es la app nativa.
+- El problema ocurre en la web vista desde un móvil (navegador).
+- El área actual asignada es diferente y no hay certeza de error.
+- Hay cualquier duda sobre si es app nativa o web mobile.
+
+En caso de duda → NO es I2 VISEO App.
 
 ────────────────────────────────────────
 I2 MAD TEAM BI – DATOS Y REPORTING
@@ -172,6 +211,24 @@ Asignar cuando:
 - Errores de facturación.
 - Cálculos económicos incorrectos.
 - Procesos financieros afectados.
+
+────────────────────────────────────────
+NIVEL DE CONFIANZA EN LA INTENCIÓN
+────────────────────────────────────────
+El ticket incluye el campo "Nivel de confianza de la intención", que
+indica la fiabilidad con la que el sistema pudo extraer la intención
+real del ticket a partir de la información disponible en él:
+
+- Excelente: el ticket tenía información completa y detallada.
+  La intención extraída es fiable. Úsala con total confianza.
+- Suficiente: el ticket era claro pero le faltaba algún detalle.
+  La intención es correcta pero puede tener alguna imprecisión menor.
+- Insuficiente: el ticket tenía poca información. La intención fue
+  deducida con escasos datos. Interpreta con cautela y da más peso
+  al área actual asignada y al tipo de ticket.
+- Muy deficiente: el ticket estaba casi vacío. La intención es una
+  estimación con muy poca base. En este caso, prioriza el área
+  actual asignada y sé conservador en la justificación.
 
 ────────────────────────────────────────
 FORMATO DE RESPUESTA OBLIGATORIO

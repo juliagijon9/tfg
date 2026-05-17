@@ -76,6 +76,21 @@ def get_db_connection():
 
 
 # ---------------------------
+# Verificar columna nivel_confianza
+# ---------------------------
+def ensure_column(conn) -> None:
+    """Añade la columna nivel_confianza si no existe."""
+    with conn.cursor() as cur:
+        cur.execute("""
+            ALTER TABLE public.ado_work_item_intentions
+            ADD COLUMN IF NOT EXISTS nivel_confianza INTEGER
+            CHECK (nivel_confianza BETWEEN 1 AND 4);
+        """)
+    conn.commit()
+    print("⚙️  Columna nivel_confianza verificada.")
+
+
+# ---------------------------
 # 1. Obtener tickets de la BD
 # ---------------------------
 def fetch_tickets():
@@ -136,28 +151,35 @@ def extract_intention(work_item_type, title, area_path, iteration_path, tags, de
         response_format={"type": "json_object"},
     )
 
-    raw = response.choices[0].message.content or ""
-    data = json.loads(raw)
-    intention = data.get("intention", "")
-    # Limitar a 600 caracteres y eliminar saltos de línea
-    intention = re.sub(r"\n+", " ", intention).strip()[:600]
-    return intention
+    try:
+        raw = response.choices[0].message.content or ""
+        data = json.loads(raw)
+        intention = re.sub(r"\n+", " ", str(data.get("intention", "")).strip()).strip()[:600]
+        nivel_confianza = int(data.get("nivel_confianza", 1))
+        if nivel_confianza not in (1, 2, 3, 4):
+            nivel_confianza = 1
+    except Exception:
+        intention = "[ERROR]"
+        nivel_confianza = 1
+    return intention, nivel_confianza
 
 
 # ---------------------------
 # 3. Guardar en la tabla
 # ---------------------------
-def upsert_intention(work_item_id, intention, model):
+def upsert_intention(work_item_id, intention, model, nivel_confianza):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO ado_work_item_intentions (work_item_id, intention, model)
-        VALUES (%s, %s, %s)
+        INSERT INTO ado_work_item_intentions
+            (work_item_id, intention, model, extracted_at, nivel_confianza)
+        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s)
         ON CONFLICT (work_item_id) DO UPDATE SET
-            intention    = EXCLUDED.intention,
-            model        = EXCLUDED.model,
-            extracted_at = CURRENT_TIMESTAMP
-    """, (work_item_id, intention, model))
+            intention        = EXCLUDED.intention,
+            model            = EXCLUDED.model,
+            extracted_at     = CURRENT_TIMESTAMP,
+            nivel_confianza  = EXCLUDED.nivel_confianza
+    """, (work_item_id, intention, model, nivel_confianza))
     conn.commit()
     cur.close()
     conn.close()
@@ -169,6 +191,10 @@ def upsert_intention(work_item_id, intention, model):
 def main():
     t_start = time.time()
     print(f"🔧 Modelo: {AZURE_DEPLOYMENT}")
+
+    conn = get_db_connection()
+    ensure_column(conn)
+    conn.close()
 
     prompt = load_prompt("prompt_intention")
 
@@ -183,13 +209,13 @@ def main():
     for row in tickets:
         work_item_id, work_item_type, title, area_path, iteration_path, tags, description, repro_steps, acceptance_criteria = row
         try:
-            intention = extract_intention(
+            intention, nivel_confianza = extract_intention(
                 work_item_type, title, area_path, iteration_path,
                 tags, description, repro_steps, acceptance_criteria, prompt
             )
-            upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT)
+            upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT, nivel_confianza)
             processed += 1
-            print(f"  ✅ [{processed}/{len(tickets)}] #{work_item_id} — {title[:60]}")
+            print(f"  ✅ [{processed}/{len(tickets)}] #{work_item_id} — {title[:60]} (confianza: {nivel_confianza})")
         except Exception as e:
             errors += 1
             print(f"  ❌ #{work_item_id} — Error: {e}")

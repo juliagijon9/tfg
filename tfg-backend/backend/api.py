@@ -476,6 +476,13 @@ def get_ticket_triage(ticket_id: int):
             cur.execute("""
                 SELECT DISTINCT
                     ii.intention, ii.extracted_at,
+                    ii.nivel_confianza AS nivel_confianza_id,
+                    CASE
+                        WHEN ii.nivel_confianza = 4 THEN 'Excelente'
+                        WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
+                        WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
+                        WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
+                    END AS nivel_confianza_dec,
                     ic.area, ic.justification, ic.model, ic.classified_at,
                     it.lista_tag, it.extracted_tag_at
                 FROM public.ado_work_items i
@@ -489,9 +496,7 @@ def get_ticket_triage(ticket_id: int):
                     GROUP BY work_item_id
                 ) it ON it.work_item_id = i.id
                 WHERE i.id = %s
-                  AND i.created_date > '2026-04-30'
                   AND ii.work_item_id IS NOT NULL
-                  AND ic.work_item_id IS NOT NULL
             """, (ticket_id,))
             row = cur.fetchone()
             cols = [d[0] for d in cur.description]
@@ -552,3 +557,130 @@ def stats():
         return result
     finally:
         conn.close()
+
+
+@app.get("/stats/detalle")
+def stats_detalle(fecha_inicio: str = None, fecha_fin: str = None):
+    if not fecha_inicio or not fecha_fin:
+        hoy = datetime.now(timezone.utc).date()
+        fecha_fin = str(hoy)
+        fecha_inicio = str(hoy - __import__("datetime").timedelta(days=30))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT i.work_item_type, COUNT(*) n_item
+                FROM ado_work_items i
+                WHERE i.created_date BETWEEN %s AND %s
+                GROUP BY 1
+                ORDER BY 1
+            """, (fecha_inicio, fecha_fin))
+            tickets_por_tipo = [{"work_item_type": r[0], "n_item": r[1]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT COUNT(*) n_item
+                FROM ado_work_item_embeddings ie
+                JOIN ado_work_items i ON ie.work_item_id = i.id
+                WHERE i.created_date BETWEEN %s AND %s
+            """, (fecha_inicio, fecha_fin))
+            total_embeddings = cur.fetchone()[0]
+
+            cur.execute("""
+                SELECT
+                    CASE
+                        WHEN ir.similarity >= 0.92 THEN 'Duplicado probable'
+                        WHEN ir.similarity >= 0.82 THEN 'Muy relacionado'
+                        WHEN ir.similarity >= 0.80 THEN 'Relacionado'
+                        ELSE 'Sin relación encontrada'
+                    END AS nivel,
+                    COUNT(*) n_item
+                FROM ado_work_item_relations ir
+                JOIN ado_work_items i ON ir.target_id = i.id
+                WHERE i.created_date BETWEEN %s AND %s
+                GROUP BY 1
+                ORDER BY 1
+            """, (fecha_inicio, fecha_fin))
+            relaciones = [{"nivel": r[0], "n_item": r[1]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT
+                    ii.nivel_confianza nivel_confianza_intencion_id,
+                    CASE
+                        WHEN ii.nivel_confianza = 4 THEN 'Excelente'
+                        WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
+                        WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
+                        WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
+                    END AS nivel_confianza_intencion_dec,
+                    COUNT(*) n_item
+                FROM ado_work_item_intentions ii
+                JOIN ado_work_items i ON ii.work_item_id = i.id
+                WHERE i.created_date BETWEEN %s AND %s
+                GROUP BY 1, 2
+                ORDER BY 1 DESC, 2
+            """, (fecha_inicio, fecha_fin))
+            intenciones_confianza = [
+                {"nivel_confianza_intencion_id": r[0], "nivel_confianza_intencion_dec": r[1], "n_item": r[2]}
+                for r in cur.fetchall()
+            ]
+
+            cur.execute("""
+                SELECT
+                    ic.area,
+                    ii.nivel_confianza nivel_confianza_intencion_id,
+                    CASE
+                        WHEN ii.nivel_confianza = 4 THEN 'Excelente'
+                        WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
+                        WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
+                        WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
+                    END AS nivel_confianza_intencion_dec,
+                    COUNT(*) n_item
+                FROM ado_work_item_classifications ic
+                JOIN ado_work_items i ON ic.work_item_id = i.id
+                JOIN ado_work_item_intentions ii ON ii.work_item_id = i.id
+                WHERE i.created_date BETWEEN %s AND %s
+                GROUP BY 1, 2, 3
+                ORDER BY 1, 2 DESC, 3
+            """, (fecha_inicio, fecha_fin))
+            clasificaciones_confianza = [
+                {"area": r[0], "nivel_confianza_intencion_id": r[1], "nivel_confianza_intencion_dec": r[2], "n_item": r[3]}
+                for r in cur.fetchall()
+            ]
+
+            cur.execute("""
+                SELECT
+                    it.tag,
+                    ii.nivel_confianza nivel_confianza_intencion_id,
+                    CASE
+                        WHEN ii.nivel_confianza = 4 THEN 'Excelente'
+                        WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
+                        WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
+                        WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
+                    END AS nivel_confianza_intencion_dec,
+                    COUNT(*) n_item
+                FROM ado_work_item_tag it
+                JOIN ado_work_items i ON it.work_item_id = i.id
+                JOIN ado_work_item_intentions ii ON ii.work_item_id = i.id
+                WHERE i.created_date BETWEEN %s AND %s
+                GROUP BY 1, 2, 3
+                ORDER BY 1, 2 DESC, 3
+            """, (fecha_inicio, fecha_fin))
+            tags_confianza = [
+                {"tag": r[0], "nivel_confianza_intencion_id": r[1], "nivel_confianza_intencion_dec": r[2], "n_item": r[3]}
+                for r in cur.fetchall()
+            ]
+
+    finally:
+        conn.close()
+
+    return {
+        "fecha_inicio": fecha_inicio,
+        "fecha_fin": fecha_fin,
+        "tickets_por_tipo": tickets_por_tipo,
+        "total_embeddings": total_embeddings,
+        "relaciones": relaciones,
+        "intenciones_confianza": intenciones_confianza,
+        "clasificaciones_confianza": clasificaciones_confianza,
+        "tags_confianza": tags_confianza,
+    }

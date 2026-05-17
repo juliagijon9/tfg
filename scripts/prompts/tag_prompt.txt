@@ -138,7 +138,13 @@ BACKEND
 Servicios y lógica interna (APIs fallan, errores 4xx/5xx, procesos internos).
 
 APP
-Aplicación móvil (error exclusivo de la app, UX mobile, notificaciones).
+Aplicación móvil nativa (iOS / Android).
+⚠️ REGLA ESTRICTA: Solo usar APP si el ticket indica EXPLÍCITAMENTE
+que el problema ocurre en la aplicación móvil instalada, por ejemplo:
+"en la app", "en iOS", "en Android", "al abrir la aplicación móvil".
+Mencionar "móvil" o "mobile" de forma genérica NO es suficiente —
+puede referirse a la web vista desde un navegador móvil (responsive).
+En caso de duda → NO usar APP.
 
 INFRAESTRUCTURA
 Entorno técnico (servicios caídos, Azure, redes, contenedores).
@@ -176,6 +182,22 @@ NBK3, NBK4, GIFTCARD, SALAS VIP, FAST TRACK, RECOMMENDER, SEARCH EXTENSION
 Se usan para trazabilidad y planificación, no para clasificar bugs técnicos.
 
 ────────────────────────────────────────
+NIVEL DE CONFIANZA EN LA INTENCIÓN
+────────────────────────────────────────
+El ticket incluye el campo "Nivel de confianza de la intención", que
+indica la fiabilidad con la que el sistema pudo extraer la intención
+real del ticket a partir de la información disponible en él:
+
+- Excelente: información completa. Asigna todos los tags que
+  identifiques con claridad.
+- Suficiente: información correcta pero incompleta. Asigna los tags
+  evidentes y omite los que requieran interpretación.
+- Insuficiente: poca información. Limítate a los tags más seguros
+  y evidentes. Evita tags especulativos.
+- Muy deficiente: ticket casi vacío. Asigna el mínimo de tags
+  posible — solo los que sean inequívocos. Si hay dudas, usa NO_TAG.
+
+────────────────────────────────────────
 REGLA FINAL — MUY IMPORTANTE
 ────────────────────────────────────────
 Los tags describen QUÉ parte del sistema está afectada.
@@ -189,6 +211,9 @@ Ejemplos de contradicción que debes evitar:
 - APP y FRONT a la vez (son canales distintos).
 - Un tag de flujo de booking (ej. PAYMENT) y un tag de proyecto
   (ej. NBK3) son COMPATIBLES entre sí, no son contradictorios.
+
+⚠️ RECUERDA: el tag APP requiere mención EXPLÍCITA a la app nativa.
+"En móvil", "vista mobile" o "responsive" → usa FRONT, nunca APP.
 
 Devuelve SIEMPRE un JSON con exactamente este formato:
 {
