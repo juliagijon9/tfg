@@ -65,7 +65,8 @@ QUERY = """
             WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
             WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
             WHEN ii.nivel_confianza = 4 THEN 'Excelente'
-        END AS nivel_confianza
+        END AS nivel_confianza,
+        ii.nivel_confianza_justificacion
     FROM public.ado_work_items i
     LEFT JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
 	LEFT JOIN public.ado_work_item_classifications ic on IC.work_item_id = i.id
@@ -116,7 +117,8 @@ def build_ticket_text(row: dict) -> str:
         f"Pasos para reproducir: {clean_html(row['repro_steps'])}\n"
         f"Criterios de aceptación: {clean_html(row['acceptance_criteria'])}\n"
         f"Intencionalidad extraída: {row['intention'] or '(sin datos)'}\n"
-        f"Nivel de confianza de la intención (1=crítico, 4=excelente): {row['nivel_confianza'] or '(sin datos)'}"
+        f"Nivel de confianza de la intención: {row['nivel_confianza'] or '(sin datos)'}\n"
+        f"Justificación del nivel de confianza: {row['nivel_confianza_justificacion'] or '(sin datos)'}"
     )
 
 

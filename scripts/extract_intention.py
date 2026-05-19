@@ -79,15 +79,19 @@ def get_db_connection():
 # Verificar columna nivel_confianza
 # ---------------------------
 def ensure_column(conn) -> None:
-    """Añade la columna nivel_confianza si no existe."""
+    """Añade las columnas nivel_confianza y nivel_confianza_justificacion si no existen."""
     with conn.cursor() as cur:
         cur.execute("""
             ALTER TABLE public.ado_work_item_intentions
             ADD COLUMN IF NOT EXISTS nivel_confianza INTEGER
             CHECK (nivel_confianza BETWEEN 1 AND 4);
         """)
+        cur.execute("""
+            ALTER TABLE public.ado_work_item_intentions
+            ADD COLUMN IF NOT EXISTS nivel_confianza_justificacion TEXT;
+        """)
     conn.commit()
-    print("⚙️  Columna nivel_confianza verificada.")
+    print("⚙️  Columnas nivel_confianza y nivel_confianza_justificacion verificadas.")
 
 
 # ---------------------------
@@ -158,28 +162,31 @@ def extract_intention(work_item_type, title, area_path, iteration_path, tags, de
         nivel_confianza = int(data.get("nivel_confianza", 1))
         if nivel_confianza not in (1, 2, 3, 4):
             nivel_confianza = 1
+        nivel_confianza_justificacion = str(data.get("nivel_confianza_justificacion", "")).strip()[:200]
     except Exception:
         intention = "[ERROR]"
         nivel_confianza = 1
-    return intention, nivel_confianza
+        nivel_confianza_justificacion = ""
+    return intention, nivel_confianza, nivel_confianza_justificacion
 
 
 # ---------------------------
 # 3. Guardar en la tabla
 # ---------------------------
-def upsert_intention(work_item_id, intention, model, nivel_confianza):
+def upsert_intention(work_item_id, intention, model, nivel_confianza, nivel_confianza_justificacion):
     conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO ado_work_item_intentions
-            (work_item_id, intention, model, extracted_at, nivel_confianza)
-        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s)
+            (work_item_id, intention, model, extracted_at, nivel_confianza, nivel_confianza_justificacion)
+        VALUES (%s, %s, %s, CURRENT_TIMESTAMP, %s, %s)
         ON CONFLICT (work_item_id) DO UPDATE SET
-            intention        = EXCLUDED.intention,
-            model            = EXCLUDED.model,
-            extracted_at     = CURRENT_TIMESTAMP,
-            nivel_confianza  = EXCLUDED.nivel_confianza
-    """, (work_item_id, intention, model, nivel_confianza))
+            intention                     = EXCLUDED.intention,
+            model                         = EXCLUDED.model,
+            extracted_at                  = CURRENT_TIMESTAMP,
+            nivel_confianza               = EXCLUDED.nivel_confianza,
+            nivel_confianza_justificacion = EXCLUDED.nivel_confianza_justificacion
+    """, (work_item_id, intention, model, nivel_confianza, nivel_confianza_justificacion))
     conn.commit()
     cur.close()
     conn.close()
@@ -209,13 +216,13 @@ def main():
     for row in tickets:
         work_item_id, work_item_type, title, area_path, iteration_path, tags, description, repro_steps, acceptance_criteria = row
         try:
-            intention, nivel_confianza = extract_intention(
+            intention, nivel_confianza, nivel_confianza_justificacion = extract_intention(
                 work_item_type, title, area_path, iteration_path,
                 tags, description, repro_steps, acceptance_criteria, prompt
             )
-            upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT, nivel_confianza)
+            upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT, nivel_confianza, nivel_confianza_justificacion)
             processed += 1
-            print(f"  ✅ [{processed}/{len(tickets)}] #{work_item_id} — {title[:60]} (confianza: {nivel_confianza})")
+            print(f"  ✅ [{processed}/{len(tickets)}] #{work_item_id} — {title[:60]} (confianza: {nivel_confianza} — {nivel_confianza_justificacion[:60]})")
         except Exception as e:
             errors += 1
             print(f"  ❌ #{work_item_id} — Error: {e}")

@@ -483,6 +483,7 @@ def get_ticket_triage(ticket_id: int):
                         WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
                         WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
                     END AS nivel_confianza_dec,
+                    ii.nivel_confianza_justificacion,
                     ic.area, ic.justification, ic.model, ic.classified_at,
                     it.lista_tag, it.extracted_tag_at
                 FROM public.ado_work_items i
@@ -490,7 +491,7 @@ def get_ticket_triage(ticket_id: int):
                 LEFT JOIN public.ado_work_item_classifications ic ON ic.work_item_id = i.id
                 LEFT JOIN (
                     SELECT work_item_id,
-                           string_agg(tag, '|') AS lista_tag,
+                           string_agg(tag || ':::' || COALESCE(justificacion, ''), '|||') AS lista_tag,
                            max(extracted_tag_at) AS extracted_tag_at
                     FROM ado_work_item_tag
                     GROUP BY work_item_id
@@ -509,7 +510,12 @@ def get_ticket_triage(ticket_id: int):
         if d.get(k):
             d[k] = d[k].isoformat()
     if d.get("lista_tag"):
-        d["tags"] = d["lista_tag"].split("|")
+        tag_items = []
+        for item in d["lista_tag"].split("|||"):
+            parts = item.split(":::", 1)
+            tag_items.append({"tag": parts[0], "justificacion": parts[1] if len(parts) > 1 else ""})
+        d["tags_detalle"] = tag_items
+        d["tags"] = [t["tag"] for t in tag_items]
     return d
 
 

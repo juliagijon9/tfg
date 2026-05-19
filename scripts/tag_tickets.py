@@ -64,9 +64,13 @@ QUERY = """
             WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
             WHEN ii.nivel_confianza = 3 THEN 'Suficiente'
             WHEN ii.nivel_confianza = 4 THEN 'Excelente'
-        END AS nivel_confianza
+        END AS nivel_confianza,
+        ii.nivel_confianza_justificacion,
+        ic.area,
+        ic.justification AS clasificacion_justificacion
     FROM public.ado_work_items i
     LEFT JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
+    LEFT JOIN public.ado_work_item_classifications ic ON ic.work_item_id = i.id
     LEFT JOIN public.ado_work_item_tag it ON it.work_item_id = i.id
     WHERE
         ii.work_item_id IS NOT NULL
@@ -116,14 +120,17 @@ def build_ticket_text(row: dict) -> str:
         f"Pasos para reproducir: {clean_html(row['repro_steps'])}\n"
         f"Criterios de aceptación: {clean_html(row['acceptance_criteria'])}\n"
         f"Intención extraída: {row['intention'] or '(sin datos)'}\n"
-        f"Nivel de confianza de la intención (1=crítico, 4=excelente): {row['nivel_confianza'] or '(sin datos)'}"
+        f"Nivel de confianza de la intención: {row['nivel_confianza'] or '(sin datos)'}\n"
+        f"Justificación del nivel de confianza: {row['nivel_confianza_justificacion'] or '(sin datos)'}\n"
+        f"Área clasificada: {row['area'] or '(sin datos)'}\n"
+        f"Justificación de la clasificación: {row['clasificacion_justificacion'] or '(sin datos)'}"
     )
 
 
 # ---------------------------
 # Llamada a Azure OpenAI
 # ---------------------------
-def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> list[str]:
+def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> tuple[list[str], str]:
     try:
         response = client.chat.completions.create(
             model=AZURE_DEPLOYMENT,
@@ -132,17 +139,18 @@ def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> list[str]
                 {"role": "user", "content": ticket_text},
             ],
             temperature=0.0,
-            max_tokens=200,
+            max_tokens=300,
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
         tags = data.get("tags", [])
         if not isinstance(tags, list) or not tags:
             raise ValueError(f"Respuesta inválida: {data}")
-        return [str(t).strip() for t in tags if t]
+        justificacion = str(data.get("justificacion", "")).strip()[:200]
+        return [str(t).strip() for t in tags if t], justificacion
     except Exception as e:
         print(f"❌ Error en ticket {ticket_id}: {e}")
-        return []
+        return [], ""
 
 
 # ---------------------------
@@ -159,10 +167,14 @@ def ensure_table(conn) -> None:
                 PRIMARY KEY (work_item_id, tag)
             );
         """)
+        cur.execute("""
+            ALTER TABLE public.ado_work_item_tag
+            ADD COLUMN IF NOT EXISTS justificacion TEXT;
+        """)
     conn.commit()
 
 
-def save_tags(conn, work_item_id: int, tags: list[str], model: str) -> None:
+def save_tags(conn, work_item_id: int, tags: list[str], model: str, justificacion: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM public.ado_work_item_tag WHERE work_item_id = %s;",
@@ -172,10 +184,10 @@ def save_tags(conn, work_item_id: int, tags: list[str], model: str) -> None:
             cur.execute(
                 """
                 INSERT INTO public.ado_work_item_tag
-                    (work_item_id, tag, model, extracted_tag_at)
-                VALUES (%s, %s, %s, NOW());
+                    (work_item_id, tag, model, extracted_tag_at, justificacion)
+                VALUES (%s, %s, %s, NOW(), %s);
                 """,
-                (work_item_id, tag, model)
+                (work_item_id, tag, model, justificacion)
             )
     conn.commit()
 
@@ -194,11 +206,11 @@ def process_tickets(conn, client, prompt: str) -> None:
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
         ticket_text = build_ticket_text(row)
-        tags = get_tags(client, ticket_id, ticket_text, prompt)
+        tags, justificacion = get_tags(client, ticket_id, ticket_text, prompt)
 
         if tags:
-            save_tags(conn, ticket_id, tags, AZURE_DEPLOYMENT)
-            print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {', '.join(tags)}")
+            save_tags(conn, ticket_id, tags, AZURE_DEPLOYMENT, justificacion)
+            print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {', '.join(tags)} — {justificacion[:60]}")
         else:
             print(f"  ❌ [{i}/{len(rows)}] Ticket {ticket_id}: ERROR (sin tags)")
 
