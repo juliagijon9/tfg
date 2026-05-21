@@ -130,7 +130,8 @@ def build_ticket_text(row: dict) -> str:
 # ---------------------------
 # Llamada a Azure OpenAI
 # ---------------------------
-def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> tuple[list[str], str]:
+def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> dict[str, str]:
+    """Devuelve dict {tag: justificacion_individual}."""
     try:
         response = client.chat.completions.create(
             model=AZURE_DEPLOYMENT,
@@ -139,48 +140,41 @@ def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> tuple[lis
                 {"role": "user", "content": ticket_text},
             ],
             temperature=0.0,
-            max_tokens=300,
+            max_tokens=400,
             response_format={"type": "json_object"},
         )
         data = json.loads(response.choices[0].message.content)
         tags = data.get("tags", [])
         if not isinstance(tags, list) or not tags:
             raise ValueError(f"Respuesta inválida: {data}")
-        justificacion = str(data.get("justificacion", "")).strip()[:200]
-        return [str(t).strip() for t in tags if t], justificacion
+        result = {}
+        for item in tags:
+            if isinstance(item, dict):
+                tag = str(item.get("tag", "")).strip()
+                just = str(item.get("justificacion", "")).strip()[:200]
+            else:
+                tag = str(item).strip()
+                just = ""
+            if tag:
+                result[tag] = just
+        return result
     except Exception as e:
         print(f"❌ Error en ticket {ticket_id}: {e}")
-        return [], ""
+        return {}
 
 
 # ---------------------------
 # Gestión de la tabla destino
 # ---------------------------
-def ensure_table(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS public.ado_work_item_tag (
-                work_item_id     BIGINT    NOT NULL,
-                tag              TEXT      NOT NULL,
-                model            TEXT      NOT NULL,
-                extracted_tag_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (work_item_id, tag)
-            );
-        """)
-        cur.execute("""
-            ALTER TABLE public.ado_work_item_tag
-            ADD COLUMN IF NOT EXISTS justificacion TEXT;
-        """)
-    conn.commit()
 
-
-def save_tags(conn, work_item_id: int, tags: list[str], model: str, justificacion: str) -> None:
+def save_tags(conn, work_item_id: int, tags_dict: dict[str, str], model: str) -> None:
+    """Guarda cada tag con su justificación individual."""
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM public.ado_work_item_tag WHERE work_item_id = %s;",
             (work_item_id,)
         )
-        for tag in tags:
+        for tag, justificacion in tags_dict.items():
             cur.execute(
                 """
                 INSERT INTO public.ado_work_item_tag
@@ -206,11 +200,12 @@ def process_tickets(conn, client, prompt: str) -> None:
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
         ticket_text = build_ticket_text(row)
-        tags, justificacion = get_tags(client, ticket_id, ticket_text, prompt)
+        tags_dict = get_tags(client, ticket_id, ticket_text, prompt)
 
-        if tags:
-            save_tags(conn, ticket_id, tags, AZURE_DEPLOYMENT, justificacion)
-            print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {', '.join(tags)} — {justificacion[:60]}")
+        if tags_dict:
+            save_tags(conn, ticket_id, tags_dict, AZURE_DEPLOYMENT)
+            resumen = ", ".join(f"{t}({j[:30]})" for t, j in tags_dict.items())
+            print(f"  ⚙️  [{i}/{len(rows)}] Ticket {ticket_id}: {resumen}")
         else:
             print(f"  ❌ [{i}/{len(rows)}] Ticket {ticket_id}: ERROR (sin tags)")
 
@@ -227,7 +222,6 @@ def main() -> None:
         host=PG_HOST, port=PG_PORT, dbname=PG_DB,
         user=PG_USER, password=PG_PASS
     )
-    ensure_table(conn)
 
     client = AzureOpenAI(
         azure_endpoint=AZURE_ENDPOINT,

@@ -79,23 +79,23 @@ def render_ticket_fields(t: dict, use_expanders: bool = True):
     if use_expanders:
         if desc:
             with st.expander("📄 Descripción"):
-                st.text(desc)
+                st.markdown(desc)
         if repro:
             with st.expander("🔁 Pasos para reproducir"):
-                st.text(repro)
+                st.markdown(repro)
         if ac:
             with st.expander("✅ Criterios de aceptación"):
-                st.text(ac)
+                st.markdown(ac)
     else:
         if desc:
             st.markdown("**📄 Descripción**")
-            st.text(desc)
+            st.markdown(desc)
         if repro:
             st.markdown("**🔁 Pasos para reproducir**")
-            st.text(repro)
+            st.markdown(repro)
         if ac:
             st.markdown("**✅ Criterios de aceptación**")
-            st.text(ac)
+            st.markdown(ac)
 
 
 # ---------------------------

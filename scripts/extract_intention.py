@@ -75,24 +75,6 @@ def get_db_connection():
     )
 
 
-# ---------------------------
-# Verificar columna nivel_confianza
-# ---------------------------
-def ensure_column(conn) -> None:
-    """Añade las columnas nivel_confianza y nivel_confianza_justificacion si no existen."""
-    with conn.cursor() as cur:
-        cur.execute("""
-            ALTER TABLE public.ado_work_item_intentions
-            ADD COLUMN IF NOT EXISTS nivel_confianza INTEGER
-            CHECK (nivel_confianza BETWEEN 1 AND 4);
-        """)
-        cur.execute("""
-            ALTER TABLE public.ado_work_item_intentions
-            ADD COLUMN IF NOT EXISTS nivel_confianza_justificacion TEXT;
-        """)
-    conn.commit()
-    print("⚙️  Columnas nivel_confianza y nivel_confianza_justificacion verificadas.")
-
 
 # ---------------------------
 # 1. Obtener tickets de la BD
@@ -198,10 +180,6 @@ def upsert_intention(work_item_id, intention, model, nivel_confianza, nivel_conf
 def main():
     t_start = time.time()
     print(f"🔧 Modelo: {AZURE_DEPLOYMENT}")
-
-    conn = get_db_connection()
-    ensure_column(conn)
-    conn.close()
 
     prompt = load_prompt("prompt_intention")
 

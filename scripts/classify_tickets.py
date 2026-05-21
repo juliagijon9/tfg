@@ -149,20 +149,6 @@ def classify_ticket(client, ticket_id: int, ticket_text: str, prompt: str) -> tu
 # ---------------------------
 # Gestión de la tabla destino
 # ---------------------------
-def ensure_table(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS public.ado_work_item_classifications (
-                work_item_id   BIGINT    NOT NULL,
-                area           TEXT      NOT NULL,
-                justification  TEXT      NOT NULL,
-                model          TEXT      NOT NULL,
-                classified_at  TIMESTAMP NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (work_item_id)
-            );
-        """)
-    conn.commit()
-
 
 def save_classification(conn, work_item_id: int, area: str,
                         justification: str, model: str) -> None:
@@ -306,7 +292,6 @@ def main() -> None:
         host=PG_HOST, port=PG_PORT, dbname=PG_DB,
         user=PG_USER, password=PG_PASS
     )
-    ensure_table(conn)
 
     client = AzureOpenAI(
         azure_endpoint=AZURE_ENDPOINT,

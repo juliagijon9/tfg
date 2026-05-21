@@ -65,6 +65,7 @@ def wiql_get_ids(min_id: int) -> list[int]:
         FROM WorkItems
         WHERE [System.TeamProject] = '{PROJECT}'
           AND [System.Id] > {min_id}
+          AND [System.WorkItemType] IN ('Bug', 'Feature', 'Product Backlog Item', 'Task', 'Delivery')
         ORDER BY [System.Id] ASC
         """
     }
@@ -112,27 +113,6 @@ def get_work_items_batch(ids: list[int], fields: list[str]) -> list[dict]:
 # ---------------------------
 # 3. Base de datos
 # ---------------------------
-def ensure_table(conn):
-    with conn.cursor() as cur:
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS ado_work_items (
-            id BIGINT PRIMARY KEY,
-            work_item_type TEXT,
-            title TEXT,
-            state TEXT,
-            created_date TIMESTAMP,
-            changed_date TIMESTAMP,
-            area_path TEXT,
-            iteration_path TEXT,
-            assigned_to TEXT,
-            tags TEXT,
-            description TEXT,
-            repro_steps TEXT,
-            acceptance_criteria TEXT
-        );
-        """)
-    conn.commit()
-
 
 def upsert_items(conn, items: list[dict]):
     rows = []
@@ -197,8 +177,6 @@ def main():
         user=PG_USER,
         password=PG_PASS
     )
-
-    ensure_table(conn)
 
     max_id = get_max_synced_id()
     print(f"📌 Max ID sincronizado: {max_id}")
