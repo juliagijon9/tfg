@@ -83,6 +83,14 @@ def save_relation(cur, source_id: int, target_id: int, relation_type: str, score
             similarity    = EXCLUDED.similarity,
             created_at    = CURRENT_TIMESTAMP
     """, (source_id, target_id, relation_type, score))
+    cur.execute("""
+        INSERT INTO ado_work_item_relations (source_id, target_id, relation_type, similarity)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (source_id, target_id) DO UPDATE SET
+            relation_type = EXCLUDED.relation_type,
+            similarity    = EXCLUDED.similarity,
+            created_at    = CURRENT_TIMESTAMP
+    """, (target_id, source_id, relation_type, score))
 
 
 def save_no_relation_marker(cur, source_id: int) -> None:
