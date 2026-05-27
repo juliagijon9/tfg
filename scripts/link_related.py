@@ -4,7 +4,7 @@ import psycopg2
 import numpy as np
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # Carga las variables del fichero .env
 
 # ---------------------------
 # PostgreSQL configuration
@@ -18,15 +18,15 @@ PG_PASS = os.getenv("POSTGRES_PASSWORD")
 # ---------------------------
 # Relation parameters
 # ---------------------------
-SOURCE_ID = os.getenv("SOURCE_ID")       # None → batch mode
-TOP_K = int(os.getenv("TOP_K", "10"))
-RELATED_THRESHOLD = float(os.getenv("RELATED_THRESHOLD", "0.80"))
-DUPLICATE_THRESHOLD = float(os.getenv("DUPLICATE_THRESHOLD", "0.90"))
-MAX_SOURCES = int(os.getenv("MAX_SOURCES", "1000"))
-COMMIT_EVERY = int(os.getenv("COMMIT_EVERY", "100"))
-DRY_RUN = os.getenv("DRY_RUN", "0") == "1"
+SOURCE_ID = os.getenv("SOURCE_ID")                                    # Si se define, procesa solo ese ticket (modo individual)
+TOP_K = int(os.getenv("TOP_K", "10"))                                 # Número máximo de vecinos más similares a considerar por ticket
+RELATED_THRESHOLD = float(os.getenv("RELATED_THRESHOLD", "0.80"))     # Similitud mínima para considerar dos tickets como "relacionados"
+DUPLICATE_THRESHOLD = float(os.getenv("DUPLICATE_THRESHOLD", "0.90")) # Similitud mínima para considerar dos tickets como "duplicados"
+MAX_SOURCES = int(os.getenv("MAX_SOURCES", "1000"))                   # Máximo de tickets a procesar por ejecución en modo batch
+COMMIT_EVERY = int(os.getenv("COMMIT_EVERY", "100"))                  # Frecuencia de commits para no perder todo si falla a mitad
+DRY_RUN = os.getenv("DRY_RUN", "0") == "1"                           # Si es True, calcula relaciones pero no guarda nada en BD
 
-# target_id = 0 significa "procesado pero sin relación encontrada"
+# target_id = 0 significa "ticket procesado pero sin ninguna relación encontrada"
 NO_RELATION_TARGET_ID = 0
 
 
@@ -34,41 +34,41 @@ NO_RELATION_TARGET_ID = 0
 # Helpers
 # ---------------------------
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    denom = np.linalg.norm(a) * np.linalg.norm(b)  # Producto de las normas (magnitudes) de ambos vectores
     if denom == 0:
-        return 0.0
-    return float(np.dot(a, b) / denom)
+        return 0.0                                   # Evita división por cero si algún vector es nulo
+    return float(np.dot(a, b) / denom)              # Producto escalar dividido entre las magnitudes: da valor entre -1 y 1
 
 
 def decide_relation(score: float) -> str | None:
-    if score >= DUPLICATE_THRESHOLD:
+    if score >= DUPLICATE_THRESHOLD:  # >= 0.90 → los tickets son prácticamente iguales
         return "duplicate"
-    if score >= RELATED_THRESHOLD:
+    if score >= RELATED_THRESHOLD:    # >= 0.80 → los tickets tienen contenido similar pero no son iguales
         return "related"
-    return None
+    return None                       # < 0.80 → no hay relación relevante, se descarta
 
 
 def load_all_embeddings(cur) -> dict[int, np.ndarray]:
-    """Carga todos los embeddings en memoria una sola vez."""
+    """Carga todos los embeddings en memoria una sola vez para evitar consultas repetidas a BD."""
     t0 = time.time()
     cur.execute("SELECT work_item_id, embedding FROM ado_work_item_embeddings")
-    emb_map = {wid: np.array(emb, dtype=np.float64) for wid, emb in cur.fetchall()}
+    emb_map = {wid: np.array(emb, dtype=np.float64) for wid, emb in cur.fetchall()}  # Convierte cada embedding a array numpy
     print(f"📦 Cargados {len(emb_map)} embeddings en memoria ({time.time() - t0:.2f}s)")
     return emb_map
 
 
 def find_top_k(source_id: int, emb_map: dict[int, np.ndarray]) -> list[tuple[int, float]]:
-    """Calcula top-K tickets más similares a source_id."""
+    """Calcula similitud coseno entre source_id y todos los demás tickets, devuelve los TOP_K más similares."""
     source_vec = emb_map.get(source_id)
     if source_vec is None:
-        return []
+        return []                                                    # El ticket no tiene embedding, no se puede comparar
     sims = [
         (wid, cosine_similarity(source_vec, vec))
         for wid, vec in emb_map.items()
-        if wid != source_id
+        if wid != source_id                                          # Se excluye el ticket consigo mismo
     ]
-    sims.sort(key=lambda x: x[1], reverse=True)
-    return sims[:TOP_K]
+    sims.sort(key=lambda x: x[1], reverse=True)                     # Ordena de mayor a menor similitud
+    return sims[:TOP_K]                                              # Devuelve solo los TOP_K más similares
 
 
 # ---------------------------
@@ -78,7 +78,7 @@ def save_relation(cur, source_id: int, target_id: int, relation_type: str, score
     cur.execute("""
         INSERT INTO ado_work_item_relations (source_id, target_id, relation_type, similarity)
         VALUES (%s, %s, %s, %s)
-        ON CONFLICT (source_id, target_id) DO UPDATE SET
+        ON CONFLICT (source_id, target_id) DO UPDATE SET    -- Si ya existe la relación, actualiza tipo y similitud
             relation_type = EXCLUDED.relation_type,
             similarity    = EXCLUDED.similarity,
             created_at    = CURRENT_TIMESTAMP
@@ -86,7 +86,7 @@ def save_relation(cur, source_id: int, target_id: int, relation_type: str, score
     cur.execute("""
         INSERT INTO ado_work_item_relations (source_id, target_id, relation_type, similarity)
         VALUES (%s, %s, %s, %s)
-        ON CONFLICT (source_id, target_id) DO UPDATE SET
+        ON CONFLICT (source_id, target_id) DO UPDATE SET    -- Inserta también la dirección inversa (la similitud es simétrica)
             relation_type = EXCLUDED.relation_type,
             similarity    = EXCLUDED.similarity,
             created_at    = CURRENT_TIMESTAMP
@@ -94,16 +94,16 @@ def save_relation(cur, source_id: int, target_id: int, relation_type: str, score
 
 
 def save_no_relation_marker(cur, source_id: int) -> None:
-    """Marca el ticket como procesado sin relación (target_id = 0)."""
+    """Guarda target_id=0 para marcar que el ticket ya fue procesado aunque no tenga relaciones."""
     cur.execute("""
         INSERT INTO ado_work_item_relations (source_id, target_id, relation_type, similarity)
         VALUES (%s, %s, NULL, NULL)
-        ON CONFLICT (source_id, target_id) DO NOTHING
+        ON CONFLICT (source_id, target_id) DO NOTHING  -- Si el marcador ya existe, no hace nada
     """, (source_id, NO_RELATION_TARGET_ID))
 
 
 def clear_no_relation_marker(cur, ticket_id: int) -> None:
-    """Elimina el marcador sin-relación de un ticket para que se reprocese."""
+    """Elimina el marcador sin-relación de un ticket porque ahora sí tiene al menos una relación."""
     cur.execute(
         "DELETE FROM ado_work_item_relations WHERE source_id = %s AND target_id = %s",
         (ticket_id, NO_RELATION_TARGET_ID),
@@ -114,13 +114,13 @@ def clear_no_relation_marker(cur, ticket_id: int) -> None:
 # Procesamiento de un ticket
 # ---------------------------
 def process_single(source_id: int, emb_map: dict[int, np.ndarray], cur) -> dict:
-    """Calcula similares de source_id y guarda relaciones. Devuelve stats."""
+    """Calcula los tickets más similares a source_id y guarda las relaciones que superen los umbrales."""
     stats = {"duplicates": 0, "related": 0, "skipped": 0}
 
-    top = find_top_k(source_id, emb_map)
+    top = find_top_k(source_id, emb_map)  # Obtiene los TOP_K tickets más similares
 
     if not top:
-        # Sin embedding propio → marcamos como procesado sin relación
+        # El ticket no tiene embedding propio → lo marcamos como procesado sin relación
         if not DRY_RUN:
             save_no_relation_marker(cur, source_id)
         return stats
@@ -129,17 +129,14 @@ def process_single(source_id: int, emb_map: dict[int, np.ndarray], cur) -> dict:
     for wid, score in top:
         rel = decide_relation(score)
         if rel is None:
-            stats["skipped"] += 1
+            stats["skipped"] += 1  # La similitud no supera ningún umbral, se descarta este par
             continue
 
         if DRY_RUN:
             print(f"  [DRY-RUN] {source_id} → {wid}  {rel}  score={score:.4f}")
         else:
-            save_relation(cur, source_id, wid, rel, score)
-            # Si el ticket relacionado tenía marcador sin-relación, limpiarlo:
-            # ahora tiene un vecino (source_id) que puede relacionarse con él
-            # en la próxima ejecución.
-            clear_no_relation_marker(cur, wid)
+            save_relation(cur, source_id, wid, rel, score)          # Guarda la relación en ambas direcciones
+            clear_no_relation_marker(cur, wid)                      # Si el ticket destino tenía marcador sin-relación, lo borra
 
         if rel == "duplicate":
             stats["duplicates"] += 1
@@ -148,7 +145,7 @@ def process_single(source_id: int, emb_map: dict[int, np.ndarray], cur) -> dict:
         saved += 1
 
     if saved == 0:
-        # Ningún vecino superó los umbrales → marcar sin relación
+        # Ningún vecino superó los umbrales → marca el ticket como procesado sin relaciones
         if DRY_RUN:
             print(f"  [DRY-RUN] {source_id} → sin relación encontrada")
         else:
@@ -168,28 +165,27 @@ def main():
     )
     cur = conn.cursor()
 
-    # Cargar todos los embeddings una sola vez
-    emb_map = load_all_embeddings(cur)
+    emb_map = load_all_embeddings(cur)  # Carga todos los embeddings en memoria de una sola vez
 
-    # Determinar los tickets a procesar
+    # Determina qué tickets procesar
     if SOURCE_ID is not None:
-        source_ids = [int(SOURCE_ID)]
+        source_ids = [int(SOURCE_ID)]  # Modo individual: procesa solo el ticket especificado
         print(f"🔍 Modo single — SOURCE_ID={SOURCE_ID}")
     else:
-        # Tickets con embedding que aún no tienen ninguna fila en relations
-        # (ni relaciones reales ni marcador sin-relación).
+        # Modo batch: tickets con embedding que aún no tienen ninguna fila en relations
+        # (ni relaciones reales ni marcador sin-relación con target_id=0)
         cur.execute("""
             SELECT i.id
             FROM ado_work_items i
             JOIN ado_work_item_embeddings ie ON ie.work_item_id = i.id
             LEFT JOIN ado_work_item_relations ir ON ir.source_id = i.id
-            WHERE ir.source_id IS NULL
-            ORDER BY i.changed_date DESC
+            WHERE ir.source_id IS NULL          -- Solo tickets que no han sido procesados todavía
+            ORDER BY i.changed_date DESC        -- Prioriza los modificados más recientemente
             LIMIT %s
         """, (MAX_SOURCES,))
         source_ids = [row[0] for row in cur.fetchall()]
         print(f"📋 Modo batch — {len(source_ids)} tickets pendientes (MAX_SOURCES={MAX_SOURCES})")
-
+tfg-frontend
     if not source_ids:
         print("✅ No hay tickets pendientes de procesar")
         cur.close()
@@ -199,18 +195,17 @@ def main():
     if DRY_RUN:
         print("⚠️  DRY_RUN activado — no se insertará nada en BD")
 
-    # Procesar
     total = {"duplicates": 0, "related": 0, "skipped": 0}
 
     for i, sid in enumerate(source_ids, start=1):
-        stats = process_single(sid, emb_map, cur)
+        stats = process_single(sid, emb_map, cur)   # Procesa cada ticket: calcula similitudes y guarda relaciones
         total["duplicates"] += stats["duplicates"]
         total["related"] += stats["related"]
         total["skipped"] += stats["skipped"]
 
         if i % COMMIT_EVERY == 0:
             if not DRY_RUN:
-                conn.commit()
+                conn.commit()  # Commit periódico para no perder todo si falla a mitad del batch
             print(f"  Progreso: {i}/{len(source_ids)} tickets procesados...")
 
     if not DRY_RUN:

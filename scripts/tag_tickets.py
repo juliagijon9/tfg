@@ -9,7 +9,7 @@ import psycopg2
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
-load_dotenv()
+load_dotenv()  # Carga las variables del fichero .env
 
 # ---------------------------
 # Variables de entorno
@@ -37,7 +37,7 @@ def load_prompt(conn, prompt_name: str) -> str:
                   SELECT MAX(version) FROM public.ado_config_prompt
                   WHERE prompt_name = %s
               );
-        """, (prompt_name, prompt_name))
+        """, (prompt_name, prompt_name))  # Carga siempre la versión más reciente del prompt
         row = cur.fetchone()
     if not row:
         print(f"❌ No se encontró el prompt '{prompt_name}' en ado_config_prompt")
@@ -73,8 +73,8 @@ QUERY = """
     LEFT JOIN public.ado_work_item_classifications ic ON ic.work_item_id = i.id
     LEFT JOIN public.ado_work_item_tag it ON it.work_item_id = i.id
     WHERE
-        ii.work_item_id IS NOT NULL
-        AND it.work_item_id IS NULL
+        ii.work_item_id IS NOT NULL     -- Solo tickets que ya tienen intención extraída
+        AND it.work_item_id IS NULL     -- Y que todavía no tienen tags asignados (incremental)
     ORDER BY i.id;
 """
 
@@ -100,9 +100,9 @@ def validate_env() -> None:
 def clean_html(text) -> str:
     if not text:
         return "(sin datos)"
-    text = html.unescape(text)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = html.unescape(text)                # Convierte entidades HTML (ej. &amp; → &)
+    text = re.sub(r'<[^>]+>', ' ', text)      # Elimina etiquetas HTML
+    text = re.sub(r'\s+', ' ', text).strip()  # Colapsa espacios múltiples en uno solo
     return text or "(sin datos)"
 
 
@@ -110,6 +110,8 @@ def clean_html(text) -> str:
 # Construcción del texto de entrada al LLM
 # ---------------------------
 def build_ticket_text(row: dict) -> str:
+    # Empaqueta todos los campos del ticket en texto plano para mandárselo al LLM
+    # Incluye intención, nivel de confianza y clasificación de los pasos anteriores como contexto
     return (
         f"Tipo: {row['work_item_type'] or '(sin datos)'}\n"
         f"Título: {row['title'] or '(sin datos)'}\n"
@@ -131,17 +133,17 @@ def build_ticket_text(row: dict) -> str:
 # Llamada a Azure OpenAI
 # ---------------------------
 def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> dict[str, str]:
-    """Devuelve dict {tag: justificacion_individual}."""
+    """Devuelve un diccionario {tag: justificacion_individual} con los tags asignados al ticket."""
     try:
         response = client.chat.completions.create(
             model=AZURE_DEPLOYMENT,
             messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": ticket_text},
+                {"role": "system", "content": prompt},     # Instrucciones al LLM: qué tags existen y cómo asignarlos
+                {"role": "user", "content": ticket_text},  # Contenido del ticket a taggear
             ],
-            temperature=0.0,
-            max_tokens=400,
-            response_format={"type": "json_object"},
+            temperature=0.0,                               # Temperatura 0 para máxima consistencia (sin aleatoriedad)
+            max_tokens=400,                                # Más tokens que clasificación porque puede haber varios tags con justificaciones
+            response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
         )
         data = json.loads(response.choices[0].message.content)
         tags = data.get("tags", [])
@@ -151,12 +153,12 @@ def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> dict[str,
         for item in tags:
             if isinstance(item, dict):
                 tag = str(item.get("tag", "")).strip()
-                just = str(item.get("justificacion", "")).strip()[:200]
+                just = str(item.get("justificacion", "")).strip()[:200]  # Limita la justificación de cada tag a 200 chars
             else:
                 tag = str(item).strip()
                 just = ""
             if tag:
-                result[tag] = just
+                result[tag] = just  # Acumula cada tag con su justificación individual en el diccionario
         return result
     except Exception as e:
         print(f"❌ Error en ticket {ticket_id}: {e}")
@@ -168,12 +170,12 @@ def get_tags(client, ticket_id: int, ticket_text: str, prompt: str) -> dict[str,
 # ---------------------------
 
 def save_tags(conn, work_item_id: int, tags_dict: dict[str, str], model: str) -> None:
-    """Guarda cada tag con su justificación individual."""
+    """Guarda cada tag con su justificación individual en una fila separada de la tabla."""
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM public.ado_work_item_tag WHERE work_item_id = %s;",
             (work_item_id,)
-        )
+        )  # Borra los tags anteriores del ticket para reemplazarlos por los nuevos
         for tag, justificacion in tags_dict.items():
             cur.execute(
                 """
@@ -181,7 +183,7 @@ def save_tags(conn, work_item_id: int, tags_dict: dict[str, str], model: str) ->
                     (work_item_id, tag, model, extracted_tag_at, justificacion)
                 VALUES (%s, %s, %s, NOW(), %s);
                 """,
-                (work_item_id, tag, model, justificacion)
+                (work_item_id, tag, model, justificacion)  # Cada tag se guarda en una fila con su propia justificación
             )
     conn.commit()
 
@@ -193,14 +195,14 @@ def process_tickets(conn, client, prompt: str) -> None:
     with conn.cursor() as cur:
         cur.execute(QUERY)
         columns = [desc[0] for desc in cur.description]
-        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]  # Convierte cada fila en un diccionario para acceso por nombre
 
     print(f"📋 Tickets a taggear: {len(rows)}")
 
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
         ticket_text = build_ticket_text(row)
-        tags_dict = get_tags(client, ticket_id, ticket_text, prompt)
+        tags_dict = get_tags(client, ticket_id, ticket_text, prompt)  # Llama al LLM para obtener los tags con sus justificaciones
 
         if tags_dict:
             save_tags(conn, ticket_id, tags_dict, AZURE_DEPLOYMENT)
@@ -209,7 +211,7 @@ def process_tickets(conn, client, prompt: str) -> None:
         else:
             print(f"  ❌ [{i}/{len(rows)}] Ticket {ticket_id}: ERROR (sin tags)")
 
-        time.sleep(0.3)
+        time.sleep(0.3)  # Pausa entre tickets para no superar el rate limit de la API
 
 
 # ---------------------------
@@ -229,7 +231,7 @@ def main() -> None:
         api_version=AZURE_API_VERSION,
     )
 
-    prompt = load_prompt(conn, "prompt_tag")
+    prompt = load_prompt(conn, "prompt_tag")  # Carga la versión más reciente del prompt desde BD
     process_tickets(conn, client, prompt)
 
     conn.close()

@@ -9,7 +9,7 @@ import psycopg2
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
-load_dotenv()
+load_dotenv()  # Carga las variables del fichero .env
 
 # ---------------------------
 # Variables de entorno
@@ -37,7 +37,7 @@ def load_prompt(conn, prompt_name: str) -> str:
                   SELECT MAX(version) FROM public.ado_config_prompt
                   WHERE prompt_name = %s
               );
-        """, (prompt_name, prompt_name))
+        """, (prompt_name, prompt_name))  # Carga siempre la versión más reciente del prompt
         row = cur.fetchone()
     if not row:
         print(f"❌ No se encontró el prompt '{prompt_name}' en ado_config_prompt")
@@ -71,8 +71,8 @@ QUERY = """
     LEFT JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
 	LEFT JOIN public.ado_work_item_classifications ic on IC.work_item_id = i.id
     WHERE
-        ii.work_item_id IS NOT NULL
-		and IC.work_item_id is null
+        ii.work_item_id IS NOT NULL     -- Solo tickets que ya tienen intención extraída
+		and IC.work_item_id is null     -- Y que todavía no tienen clasificación (incremental)
     ORDER BY i.id;
 """
 
@@ -98,9 +98,9 @@ def validate_env() -> None:
 def clean_html(text) -> str:
     if not text:
         return "(sin datos)"
-    text = html.unescape(text)
-    text = re.sub(r'<[^>]+>', ' ', text)
-    text = re.sub(r'\s+', ' ', text).strip()
+    text = html.unescape(text)                    # Convierte entidades HTML (ej. &amp; → &)
+    text = re.sub(r'<[^>]+>', ' ', text)          # Elimina etiquetas HTML
+    text = re.sub(r'\s+', ' ', text).strip()      # Colapsa espacios múltiples en uno solo
     return text or "(sin datos)"
 
 
@@ -108,6 +108,8 @@ def clean_html(text) -> str:
 # Construcción del texto de entrada al LLM
 # ---------------------------
 def build_ticket_text(row: dict) -> str:
+    # Empaqueta todos los campos del ticket en texto plano para mandárselo al LLM
+    # Incluye la intención extraída y el nivel de confianza del paso anterior como contexto adicional
     return (
         f"Tipo: {row['work_item_type'] or '(sin datos)'}\n"
         f"Título: {row['title'] or '(sin datos)'}\n"
@@ -130,12 +132,12 @@ def classify_ticket(client, ticket_id: int, ticket_text: str, prompt: str) -> tu
         response = client.chat.completions.create(
             model=AZURE_DEPLOYMENT,
             messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": ticket_text},
+                {"role": "system", "content": prompt},     # Instrucciones al LLM: cómo clasificar y qué áreas existen
+                {"role": "user", "content": ticket_text},  # Contenido del ticket a clasificar
             ],
-            temperature=0.0,
-            max_tokens=200,
-            response_format={"type": "json_object"},
+            temperature=0.0,                               # Temperatura 0 para máxima consistencia (sin aleatoriedad)
+            max_tokens=200,                                # La respuesta es corta: solo área + justificación
+            response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
         )
         data = json.loads(response.choices[0].message.content)
         area = data.get("area", "[SIN ÁREA]").strip()
@@ -157,7 +159,7 @@ def save_classification(conn, work_item_id: int, area: str,
             INSERT INTO public.ado_work_item_classifications
                 (work_item_id, area, justification, model, classified_at)
             VALUES (%s, %s, %s, %s, NOW())
-            ON CONFLICT (work_item_id) DO UPDATE SET
+            ON CONFLICT (work_item_id) DO UPDATE SET    -- Si ya existe (ej. tras Recalcular IA), actualiza
                 area          = EXCLUDED.area,
                 justification = EXCLUDED.justification,
                 model         = EXCLUDED.model,
@@ -166,7 +168,7 @@ def save_classification(conn, work_item_id: int, area: str,
     conn.commit()
 
 
-# Áreas válidas — el último segmento del area_path de ADO se compara aquí.
+# Áreas válidas del proyecto — el último segmento del area_path de ADO se compara contra esta lista
 KNOWN_AREAS = {
     "I2 Ecommerce Team",
     "I2 Airplane Team",
@@ -178,21 +180,21 @@ KNOWN_AREAS = {
     "Teams BFM",
 }
 
-EXAMPLES_PER_AREA = 2  # ejemplos reales por área para el few-shot
+EXAMPLES_PER_AREA = 2  # Número máximo de ejemplos reales por área para el few-shot del prompt
 
 
 def resolve_area_from_path(area_path: str | None) -> str | None:
-    """Devuelve el área conocida si el último segmento del area_path coincide."""
+    """Devuelve el área conocida si el último segmento del area_path coincide con alguna área válida."""
     if not area_path:
         return None
-    segment = area_path.strip().split("\\")[-1].strip()
-    return segment if segment in KNOWN_AREAS else None
+    segment = area_path.strip().split("\\")[-1].strip()  # Extrae el último segmento (ej. "I2 Ecommerce Team")
+    return segment if segment in KNOWN_AREAS else None    # Solo devuelve el área si es una de las conocidas
 
 
 def fetch_examples(conn) -> str:
     """
-    Obtiene hasta EXAMPLES_PER_AREA tickets reales por área (con área asignada
-    e intención extraída) y los formatea como bloque few-shot para el prompt.
+    Obtiene tickets reales de la BD con área correcta e intención extraída,
+    y los formatea como ejemplos few-shot para mejorar la clasificación del LLM.
     """
     with conn.cursor() as cur:
         cur.execute("""
@@ -205,13 +207,13 @@ def fetch_examples(conn) -> str:
             FROM public.ado_work_items i
             JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
             WHERE i.area_path IS NOT NULL
-              AND split_part(i.area_path, '\\', -1) = ANY(%s)
+              AND split_part(i.area_path, '\\', -1) = ANY(%s)   -- Solo tickets de áreas conocidas
               AND ii.intention IS NOT NULL
             ORDER BY last_segment, i.id DESC
         """, (list(KNOWN_AREAS),))
         rows = cur.fetchall()
 
-    # Agrupar por área y limitar a EXAMPLES_PER_AREA por cada una
+    # Agrupa los ejemplos por área y limita a EXAMPLES_PER_AREA por cada una
     from collections import defaultdict
     by_area: dict[str, list] = defaultdict(list)
     for last_segment, wtype, title, area_path, intention in rows:
@@ -221,6 +223,7 @@ def fetch_examples(conn) -> str:
     if not by_area:
         return ""
 
+    # Formatea los ejemplos como bloque de texto legible para el LLM
     lines = ["────────────────────────────────────────",
              "EJEMPLOS REALES DE ASIGNACIÓN CORRECTA",
              "────────────────────────────────────────"]
@@ -244,11 +247,11 @@ def process_tickets(conn, client, base_prompt: str) -> None:
     with conn.cursor() as cur:
         cur.execute(QUERY)
         columns = [desc[0] for desc in cur.description]
-        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+        rows = [dict(zip(columns, row)) for row in cur.fetchall()]  # Convierte cada fila en un diccionario para acceso por nombre
 
     print(f"📋 Tickets a clasificar: {len(rows)}")
 
-    # Construir prompt enriquecido con ejemplos reales (few-shot)
+    # Enriquece el prompt base con ejemplos reales de la BD (few-shot learning)
     few_shot = fetch_examples(conn)
     prompt = base_prompt + ("\n\n" + few_shot if few_shot else "")
     if few_shot:
@@ -259,25 +262,25 @@ def process_tickets(conn, client, base_prompt: str) -> None:
 
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
-        area_known = resolve_area_from_path(row.get("area_path"))
+        area_known = resolve_area_from_path(row.get("area_path"))  # Comprueba si el ticket ya tiene un área válida asignada en ADO
 
         if area_known:
-            # Área ya asignada: el LLM la confirma y justifica
+            # El área ya está asignada en ADO: el LLM solo confirma y justifica por qué es coherente
             ticket_text = build_ticket_text(row)
             ticket_text += f"\n\nINSTRUCCIÓN: El área '{area_known}' ya está asignada. Confírmala y justifica brevemente por qué la intención extraída es coherente con este área."
             area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)
-            save_classification(conn, ticket_id, area_known, justification, AZURE_DEPLOYMENT)
+            save_classification(conn, ticket_id, area_known, justification, AZURE_DEPLOYMENT)  # Guarda el área original, no la del LLM
             confirmed += 1
             print(f"  ✅ [{i}/{len(rows)}] #{ticket_id}: {area_known} (confirmado)")
         else:
-            # Sin área reconocida: el LLM propone área y justificación
+            # Sin área reconocida en ADO: el LLM propone el área más adecuada
             ticket_text = build_ticket_text(row)
             area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)
             save_classification(conn, ticket_id, area, justification, AZURE_DEPLOYMENT)
             llm_classified += 1
             print(f"  🤖 [{i}/{len(rows)}] #{ticket_id}: {area} (propuesto por LLM)")
 
-        time.sleep(0.3)
+        time.sleep(0.3)  # Pausa entre tickets para no superar el rate limit de la API
 
     print(f"   Confirmados: {confirmed} | Propuestos por LLM: {llm_classified}")
 
@@ -299,7 +302,7 @@ def main() -> None:
         api_version=AZURE_API_VERSION,
     )
 
-    prompt = load_prompt(conn, "prompt_classification")
+    prompt = load_prompt(conn, "prompt_classification")  # Carga la versión más reciente del prompt desde BD
     process_tickets(conn, client, prompt)
 
     conn.close()

@@ -5,16 +5,16 @@ import psycopg2
 from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # Carga las variables del fichero .env
 
 # ---------------------------
 # Azure DevOps configuration
 # ---------------------------
-ORG = os.getenv("ADO_ORG")
-PROJECT = os.getenv("ADO_PROJECT")
-PAT = os.getenv("ADO_PAT")
-API_VERSION_WIQL = "7.1-preview.2"
-API_VERSION_BATCH = "7.1-preview.1"
+ORG = os.getenv("ADO_ORG")           # Nombre de la organización en Azure DevOps
+PROJECT = os.getenv("ADO_PROJECT")   # Nombre del proyecto dentro de la organización
+PAT = os.getenv("ADO_PAT")           # Personal Access Token para autenticarse con la API de ADO
+API_VERSION_WIQL = "7.1-preview.2"   # Versión de la API para queries WIQL (búsqueda de IDs)
+API_VERSION_BATCH = "7.1-preview.1"  # Versión de la API para descarga en batch (detalle de tickets)
 
 # ---------------------------
 # PostgreSQL configuration
@@ -30,9 +30,9 @@ PG_PASS = os.getenv("POSTGRES_PASSWORD")
 # Helpers
 # ---------------------------
 def get_headers(pat: str) -> dict:
-    token = base64.b64encode(f":{pat}".encode()).decode()
+    token = base64.b64encode(f":{pat}".encode()).decode()  # Codifica el PAT en Base64 para autenticación Basic Auth
     return {
-        "Authorization": f"Basic {token}",
+        "Authorization": f"Basic {token}",  # Cabecera requerida por la API de Azure DevOps
         "Content-Type": "application/json"
     }
 
@@ -46,9 +46,9 @@ def get_max_synced_id() -> int:
     )
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT MAX(id) FROM ado_work_items")
+            cur.execute("SELECT MAX(id) FROM ado_work_items")  # Busca el ID más alto ya guardado en BD
             row = cur.fetchone()
-            return row[0] if row and row[0] else 0
+            return row[0] if row and row[0] else 0  # Si la tabla está vacía devuelve 0 para traer todo
     finally:
         conn.close()
 
@@ -68,9 +68,11 @@ def wiql_get_ids(min_id: int) -> list[int]:
           AND [System.WorkItemType] IN ('Bug', 'Feature', 'Product Backlog Item', 'Task', 'Delivery')
         ORDER BY [System.Id] ASC
         """
+        # AND [System.Id] > {min_id}               → sincronización incremental: solo IDs nuevos
+        # AND [System.WorkItemType] IN (...)        → filtra solo los 5 tipos relevantes para el TFG
     }
 
-    r = requests.post(url, headers=get_headers(PAT), json=wiql, timeout=30)
+    r = requests.post(url, headers=get_headers(PAT), json=wiql, timeout=30)  # Ejecuta la query WIQL en ADO
 
     if r.status_code != 200:
         print("❌ ERROR ejecutando WIQL")
@@ -79,7 +81,7 @@ def wiql_get_ids(min_id: int) -> list[int]:
         r.raise_for_status()
 
     data = r.json()
-    return [item["id"] for item in data.get("workItems", [])]
+    return [item["id"] for item in data.get("workItems", [])]  # Devuelve solo la lista de IDs, sin detalle
 
 
 # ---------------------------
@@ -89,11 +91,11 @@ def get_work_items_batch(ids: list[int], fields: list[str]) -> list[dict]:
     url = f"https://dev.azure.com/{ORG}/_apis/wit/workitemsbatch?api-version={API_VERSION_BATCH}"
     items: list[dict] = []
 
-    for i in range(0, len(ids), 200):
+    for i in range(0, len(ids), 200):       # Divide los IDs en grupos de 200 (límite máximo de la API)
         chunk = ids[i:i + 200]
         payload = {
             "ids": chunk,
-            "fields": fields
+            "fields": fields                # Solo descarga los campos especificados, no el ticket completo
         }
 
         r = requests.post(url, headers=get_headers(PAT), json=payload, timeout=60)
@@ -105,7 +107,7 @@ def get_work_items_batch(ids: list[int], fields: list[str]) -> list[dict]:
             print("IDs problemáticos (ejemplo):", chunk[:5])
             r.raise_for_status()
 
-        items.extend(r.json().get("value", []))
+        items.extend(r.json().get("value", []))  # Acumula los tickets de cada batch en la lista total
 
     return items
 
@@ -121,7 +123,7 @@ def upsert_items(conn, items: list[dict]):
         fields = it.get("fields", {})
         assigned = fields.get("System.AssignedTo")
         if isinstance(assigned, dict):
-            assigned = assigned.get("displayName")
+            assigned = assigned.get("displayName")  # AssignedTo viene como objeto; extraemos solo el nombre
 
         rows.append((
             it.get("id"),
@@ -145,7 +147,7 @@ def upsert_items(conn, items: list[dict]):
      area_path, iteration_path, assigned_to, tags, description,
      repro_steps, acceptance_criteria)
     VALUES %s
-    ON CONFLICT (id) DO UPDATE SET
+    ON CONFLICT (id) DO UPDATE SET          -- Si el ticket ya existe, actualiza todos sus campos con los nuevos valores
         work_item_type = EXCLUDED.work_item_type,
         title = EXCLUDED.title,
         state = EXCLUDED.state,
@@ -161,7 +163,7 @@ def upsert_items(conn, items: list[dict]):
     """
 
     with conn.cursor() as cur:
-        execute_values(cur, sql, rows)
+        execute_values(cur, sql, rows)  # Inserta todas las filas de golpe, más eficiente que una a una
 
     conn.commit()
 
@@ -178,10 +180,10 @@ def main():
         password=PG_PASS
     )
 
-    max_id = get_max_synced_id()
+    max_id = get_max_synced_id()           # Paso 1: obtiene el último ID ya sincronizado
     print(f"📌 Max ID sincronizado: {max_id}")
 
-    ids = wiql_get_ids(max_id)
+    ids = wiql_get_ids(max_id)             # Paso 2: consulta ADO para obtener solo los IDs nuevos
     print(f"IDs encontrados: {len(ids)}")
 
     fields = [
@@ -200,10 +202,10 @@ def main():
         "Microsoft.VSTS.Common.AcceptanceCriteria"
     ]
 
-    items = get_work_items_batch(ids, fields)
+    items = get_work_items_batch(ids, fields)  # Paso 3: descarga el detalle de cada ticket en batches
     print(f"Items descargados: {len(items)}")
 
-    upsert_items(conn, items)
+    upsert_items(conn, items)              # Paso 4: inserta o actualiza los tickets en PostgreSQL
     conn.close()
     print("✅ Sincronización completada")
 

@@ -15,7 +15,7 @@ import sys
 import psycopg2
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # Carga las variables del fichero .env
 
 # ---------------------------
 # PostgreSQL configuration
@@ -51,19 +51,19 @@ def create_tables(conn) -> None:
         print("  ⚙️  ado_work_items...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_work_items (
-                id                  BIGINT PRIMARY KEY,
-                work_item_type      TEXT,
+                id                  BIGINT PRIMARY KEY,   -- ID del ticket en Azure DevOps
+                work_item_type      TEXT,                 -- Tipo: Bug, Feature, Task, etc.
                 title               TEXT,
-                state               TEXT,
+                state               TEXT,                 -- Estado: Active, Closed, Resolved, etc.
                 created_date        TIMESTAMP,
                 changed_date        TIMESTAMP,
-                area_path           TEXT,
-                iteration_path      TEXT,
-                assigned_to         TEXT,
-                tags                TEXT,
-                description         TEXT,
-                repro_steps         TEXT,
-                acceptance_criteria TEXT
+                area_path           TEXT,                 -- Ruta jerárquica del área en ADO (ej. "Proyecto\\Equipo")
+                iteration_path      TEXT,                 -- Sprint o iteración asignada
+                assigned_to         TEXT,                 -- Nombre del responsable
+                tags                TEXT,                 -- Tags originales de ADO (texto libre separado por ;)
+                description         TEXT,                 -- Descripción en HTML (se limpia antes de mandar al LLM)
+                repro_steps         TEXT,                 -- Pasos para reproducir en HTML (solo relevante en Bugs)
+                acceptance_criteria TEXT                  -- Criterios de aceptación en HTML
             );
         """)
 
@@ -73,9 +73,9 @@ def create_tables(conn) -> None:
         print("  ⚙️  ado_work_item_embeddings...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_work_item_embeddings (
-                work_item_id  BIGINT PRIMARY KEY REFERENCES public.ado_work_items(id),
-                embedding     DOUBLE PRECISION[],
-                model         TEXT,
+                work_item_id  BIGINT PRIMARY KEY REFERENCES public.ado_work_items(id),  -- FK al ticket
+                embedding     DOUBLE PRECISION[],   -- Vector numérico de alta dimensión (text-embedding-3-large = 3072 dims)
+                model         TEXT,                 -- Nombre del modelo que generó el embedding
                 created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -86,21 +86,21 @@ def create_tables(conn) -> None:
         print("  ⚙️  ado_work_item_relations...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_work_item_relations (
-                source_id     BIGINT REFERENCES public.ado_work_items(id),
-                target_id     BIGINT,
-                relation_type TEXT,
-                similarity    DOUBLE PRECISION,
+                source_id     BIGINT REFERENCES public.ado_work_items(id),  -- Ticket origen de la comparación
+                target_id     BIGINT,               -- Ticket destino (0 = marcador de "procesado sin relación")
+                relation_type TEXT,                 -- "duplicate" (>=0.90) o "related" (>=0.80) o NULL si target_id=0
+                similarity    DOUBLE PRECISION,     -- Puntuación de similitud coseno entre los dos embeddings
                 created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (source_id, target_id)
+                PRIMARY KEY (source_id, target_id)  -- Un par (origen, destino) es único
             );
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_relations_source
-            ON public.ado_work_item_relations(source_id);
+            ON public.ado_work_item_relations(source_id);   -- Índice para acelerar búsquedas por ticket origen
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_relations_type
-            ON public.ado_work_item_relations(relation_type);
+            ON public.ado_work_item_relations(relation_type);  -- Índice para filtrar por tipo de relación
         """)
 
         # ---------------------------
@@ -110,11 +110,11 @@ def create_tables(conn) -> None:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_work_item_intentions (
                 work_item_id                  BIGINT PRIMARY KEY REFERENCES public.ado_work_items(id),
-                intention                     TEXT,
-                model                         TEXT,
+                intention                     TEXT,           -- Frase que resume qué quiere conseguir el ticket
+                model                         TEXT,           -- Modelo LLM que extrajo la intención
                 extracted_at                  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                nivel_confianza               INTEGER CHECK (nivel_confianza BETWEEN 1 AND 4),
-                nivel_confianza_justificacion TEXT
+                nivel_confianza               INTEGER CHECK (nivel_confianza BETWEEN 1 AND 4),  -- 1=Crítico, 2=Insuficiente, 3=Suficiente, 4=Excelente
+                nivel_confianza_justificacion TEXT            -- Frase explicando por qué se asignó ese nivel
             );
         """)
 
@@ -125,9 +125,9 @@ def create_tables(conn) -> None:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_work_item_classifications (
                 work_item_id   BIGINT PRIMARY KEY REFERENCES public.ado_work_items(id),
-                area           TEXT      NOT NULL,
-                justification  TEXT      NOT NULL,
-                model          TEXT      NOT NULL,
+                area           TEXT      NOT NULL,   -- Área del equipo asignada (ej. "I2 Ecommerce Team")
+                justification  TEXT      NOT NULL,   -- Explicación del LLM de por qué ese área
+                model          TEXT      NOT NULL,   -- Modelo LLM que clasificó el ticket
                 classified_at  TIMESTAMP NOT NULL DEFAULT NOW()
             );
         """)
@@ -139,11 +139,11 @@ def create_tables(conn) -> None:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_work_item_tag (
                 work_item_id     BIGINT NOT NULL REFERENCES public.ado_work_items(id),
-                tag              TEXT   NOT NULL,
-                model            TEXT   NOT NULL,
+                tag              TEXT   NOT NULL,    -- Nombre del tag funcional (ej. "PAYMENT", "BACKEND")
+                model            TEXT   NOT NULL,    -- Modelo LLM que asignó el tag
                 extracted_tag_at TIMESTAMP NOT NULL DEFAULT NOW(),
-                justificacion    TEXT,
-                PRIMARY KEY (work_item_id, tag)
+                justificacion    TEXT,               -- Justificación individual para este tag concreto
+                PRIMARY KEY (work_item_id, tag)      -- Un ticket no puede tener el mismo tag dos veces
             );
         """)
 
@@ -154,7 +154,7 @@ def create_tables(conn) -> None:
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.ado_config_prompt (
                 prompt_name  VARCHAR(50) NOT NULL,
-                version      SERIAL,
+                version      SERIAL,                -- Se autoincrementa con cada INSERT; los scripts cargan siempre MAX(version)
                 created_at   TIMESTAMP   NOT NULL DEFAULT NOW(),
                 prompt_text  TEXT        NOT NULL,
                 PRIMARY KEY (prompt_name, version)
@@ -167,17 +167,17 @@ def create_tables(conn) -> None:
         print("  ⚙️  pipeline_jobs...")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS public.pipeline_jobs (
-                job_id      UUID PRIMARY KEY,
-                type        TEXT,
-                status      TEXT,
-                result      JSONB,
-                error       TEXT,
+                job_id      UUID PRIMARY KEY,   -- Identificador único del job generado por el backend
+                type        TEXT,               -- Tipo de job: "full", "sync", "embeddings", etc.
+                status      TEXT,               -- Estado: "running", "completed", "error"
+                result      JSONB,              -- Resultado del job en JSON (output de cada paso)
+                error       TEXT,               -- Mensaje de error si el job falló
                 started_at  TIMESTAMP,
                 finished_at TIMESTAMP
             );
         """)
 
-    conn.commit()
+    conn.commit()  # Confirma todas las creaciones de tabla en una sola transacción
 
 
 # ---------------------------
@@ -218,7 +218,7 @@ def insert_initial_prompts(conn) -> None:
                 WHERE NOT EXISTS (
                     SELECT 1 FROM public.ado_config_prompt WHERE prompt_name = %s
                 );
-            """, (name, text, name))
+            """, (name, text, name))  # WHERE NOT EXISTS garantiza que solo inserta si el prompt no existe todavía
             if cur.rowcount > 0:
                 print(f"  ⚙️  Prompt '{name}' insertado.")
             else:
