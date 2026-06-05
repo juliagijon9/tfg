@@ -537,6 +537,88 @@ def reset_ticket_ia(ticket_id: int):
 
 
 # ---------------------------
+# Modelos de clasificación
+# ---------------------------
+
+@app.get("/modelos-clasificacion")
+def list_modelos():
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, work_item_type, title, area_path, iteration_path, area, tags, description, repro_steps, acceptance_criteria
+                FROM public.ado_work_item_classifications_models
+                ORDER BY area_path
+            """)
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    return rows
+
+
+@app.get("/modelos-clasificacion/preview/{ticket_id}")
+def preview_modelo(ticket_id: int):
+    """Devuelve el ticket de ado_work_items + su clasificación para previsualizar antes de añadir como modelo."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT i.id, i.work_item_type, i.title, i.area_path, i.iteration_path, c.area, i.tags, i.description, i.repro_steps, i.acceptance_criteria
+                FROM public.ado_work_items i
+                JOIN public.ado_work_item_classifications c ON i.id = c.work_item_id
+                WHERE i.id = %s
+            """, (ticket_id,))
+            row = cur.fetchone()
+            cols = [d[0] for d in cur.description]
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} no encontrado o sin clasificación")
+    return dict(zip(cols, row))
+
+
+@app.post("/modelos-clasificacion/{ticket_id}")
+def add_modelo(ticket_id: int):
+    """Inserta un ticket como modelo de clasificación. Falla si ya existe."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM public.ado_work_item_classifications_models WHERE id = %s", (ticket_id,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail=f"El ticket {ticket_id} ya existe como modelo de clasificación")
+            cur.execute("""
+                INSERT INTO public.ado_work_item_classifications_models
+                    (id, work_item_type, title, area_path, iteration_path, area, tags, description, repro_steps, acceptance_criteria)
+                SELECT i.id, i.work_item_type, i.title, i.area_path, i.iteration_path, c.area, i.tags, i.description, i.repro_steps, i.acceptance_criteria
+                FROM public.ado_work_items i
+                JOIN public.ado_work_item_classifications c ON i.id = c.work_item_id
+                WHERE i.id = %s
+            """, (ticket_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} no encontrado o sin clasificación")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "ticket_id": ticket_id}
+
+
+@app.delete("/modelos-clasificacion/{ticket_id}")
+def delete_modelo(ticket_id: int):
+    """Elimina un ticket del listado de modelos de clasificación."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM public.ado_work_item_classifications_models WHERE id = %s", (ticket_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} no encontrado en modelos")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "ticket_id": ticket_id}
+
+
+# ---------------------------
 # Estadísticas
 # ---------------------------
 

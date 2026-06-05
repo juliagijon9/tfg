@@ -185,7 +185,7 @@ def main():
         """, (MAX_SOURCES,))
         source_ids = [row[0] for row in cur.fetchall()]
         print(f"📋 Modo batch — {len(source_ids)} tickets pendientes (MAX_SOURCES={MAX_SOURCES})")
-tfg-frontend
+
     if not source_ids:
         print("✅ No hay tickets pendientes de procesar")
         cur.close()

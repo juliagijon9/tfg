@@ -168,75 +168,38 @@ def save_classification(conn, work_item_id: int, area: str,
     conn.commit()
 
 
-# Áreas válidas del proyecto — el último segmento del area_path de ADO se compara contra esta lista
-KNOWN_AREAS = {
-    "I2 Ecommerce Team",
-    "I2 Airplane Team",
-    "I2 VISEO Team",
-    "I2 VISEO App",
-    "I2 MAD Team BI",
-    "Team MKT I2",
-    "Team QA",
-    "Teams BFM",
-}
-
-EXAMPLES_PER_AREA = 2  # Número máximo de ejemplos reales por área para el few-shot del prompt
-
-
-def resolve_area_from_path(area_path: str | None) -> str | None:
-    """Devuelve el área conocida si el último segmento del area_path coincide con alguna área válida."""
-    if not area_path:
-        return None
-    segment = area_path.strip().split("\\")[-1].strip()  # Extrae el último segmento (ej. "I2 Ecommerce Team")
-    return segment if segment in KNOWN_AREAS else None    # Solo devuelve el área si es una de las conocidas
-
-
-def fetch_examples(conn) -> str:
+def fetch_model_tickets(conn) -> str:
     """
-    Obtiene tickets reales de la BD con área correcta e intención extraída,
-    y los formatea como ejemplos few-shot para mejorar la clasificación del LLM.
+    Obtiene los tickets modelo de ado_work_item_classifications_models,
+    elegidos manualmente como ejemplos de clasificación correcta (pata negra).
+    Se formatean como bloque de texto y se añaden al final del prompt.
     """
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT ON (last_segment, i.id)
-                split_part(i.area_path, '\\', -1)  AS last_segment,
-                i.work_item_type,
-                i.title,
-                i.area_path,
-                ii.intention
-            FROM public.ado_work_items i
-            JOIN public.ado_work_item_intentions ii ON ii.work_item_id = i.id
-            WHERE i.area_path IS NOT NULL
-              AND split_part(i.area_path, '\\', -1) = ANY(%s)   -- Solo tickets de áreas conocidas
-              AND ii.intention IS NOT NULL
-            ORDER BY last_segment, i.id DESC
-        """, (list(KNOWN_AREAS),))
+            SELECT i.id, i.work_item_type, i.title, i.area_path, i.iteration_path, i.area, i.tags, i.description, i.repro_steps, i.acceptance_criteria
+            FROM ado_work_item_classifications_models i
+            ORDER BY i.area_path
+        """)
         rows = cur.fetchall()
+        columns = [desc[0] for desc in cur.description]
 
-    # Agrupa los ejemplos por área y limita a EXAMPLES_PER_AREA por cada una
-    from collections import defaultdict
-    by_area: dict[str, list] = defaultdict(list)
-    for last_segment, wtype, title, area_path, intention in rows:
-        if len(by_area[last_segment]) < EXAMPLES_PER_AREA:
-            by_area[last_segment].append((wtype, title, area_path, intention))
-
-    if not by_area:
+    if not rows:
         return ""
 
-    # Formatea los ejemplos como bloque de texto legible para el LLM
-    lines = ["────────────────────────────────────────",
-             "EJEMPLOS REALES DE ASIGNACIÓN CORRECTA",
-             "────────────────────────────────────────"]
-    for area, examples in sorted(by_area.items()):
-        for wtype, title, area_path, intention in examples:
-            lines.append(
-                f"Tipo: {wtype} | Área actual: {area_path}\n"
-                f"Título: {title}\n"
-                f"Intención: {intention}\n"
-                f'→ {{"area": "{area}", "justification": "Asignación correcta: la intención y el tipo de ticket son coherentes con {area}."}}'
-            )
-            lines.append("")
-    lines.append("────────────────────────────────────────")
+    lines = []
+    for row in rows:
+        r = dict(zip(columns, row))
+        lines.append(
+            f"ID: {r['id']} | Tipo: {r['work_item_type'] or '(sin datos)'} | Área ADO: {r['area_path'] or '(sin datos)'} | Área correcta: {r['area'] or '(sin datos)'}\n"
+            f"Título: {r['title'] or '(sin datos)'}\n"
+            f"Iteración: {r['iteration_path'] or '(sin datos)'}\n"
+            f"Etiquetas: {r['tags'] or '(sin datos)'}\n"
+            f"Descripción: {clean_html(r['description'])}\n"
+            f"Pasos para reproducir: {clean_html(r['repro_steps'])}\n"
+            f"Criterios de aceptación: {clean_html(r['acceptance_criteria'])}"
+        )
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -251,38 +214,20 @@ def process_tickets(conn, client, base_prompt: str) -> None:
 
     print(f"📋 Tickets a clasificar: {len(rows)}")
 
-    # Enriquece el prompt base con ejemplos reales de la BD (few-shot learning)
-    few_shot = fetch_examples(conn)
-    prompt = base_prompt + ("\n\n" + few_shot if few_shot else "")
-    if few_shot:
-        print(f"📚 Few-shot: ejemplos reales cargados de BD")
-
-    confirmed = 0
-    llm_classified = 0
+    # Enriquece el prompt con tickets modelo elegidos manualmente (pata negra)
+    model_tickets = fetch_model_tickets(conn)
+    prompt = base_prompt + ("\n\n" + model_tickets if model_tickets else "")
+    if model_tickets:
+        print(f"📚 Tickets modelo cargados de ado_work_item_classifications_models")
 
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
-        area_known = resolve_area_from_path(row.get("area_path"))  # Comprueba si el ticket ya tiene un área válida asignada en ADO
-
-        if area_known:
-            # El área ya está asignada en ADO: el LLM solo confirma y justifica por qué es coherente
-            ticket_text = build_ticket_text(row)
-            ticket_text += f"\n\nINSTRUCCIÓN: El área '{area_known}' ya está asignada. Confírmala y justifica brevemente por qué la intención extraída es coherente con este área."
-            area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)
-            save_classification(conn, ticket_id, area_known, justification, AZURE_DEPLOYMENT)  # Guarda el área original, no la del LLM
-            confirmed += 1
-            print(f"  ✅ [{i}/{len(rows)}] #{ticket_id}: {area_known} (confirmado)")
-        else:
-            # Sin área reconocida en ADO: el LLM propone el área más adecuada
-            ticket_text = build_ticket_text(row)
-            area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)
-            save_classification(conn, ticket_id, area, justification, AZURE_DEPLOYMENT)
-            llm_classified += 1
-            print(f"  🤖 [{i}/{len(rows)}] #{ticket_id}: {area} (propuesto por LLM)")
+        ticket_text = build_ticket_text(row)
+        area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)  # El LLM propone el área basándose en el contenido y los tickets modelo
+        save_classification(conn, ticket_id, area, justification, AZURE_DEPLOYMENT)
+        print(f"  🤖 [{i}/{len(rows)}] #{ticket_id}: {area}")
 
         time.sleep(0.3)  # Pausa entre tickets para no superar el rate limit de la API
-
-    print(f"   Confirmados: {confirmed} | Propuestos por LLM: {llm_classified}")
 
 
 # ---------------------------

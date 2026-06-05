@@ -148,6 +148,25 @@ def create_tables(conn) -> None:
         """)
 
         # ---------------------------
+        # Tickets modelo para clasificación (pata negra)
+        # ---------------------------
+        print("  ⚙️  ado_work_item_classifications_models...")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.ado_work_item_classifications_models (
+                id                  BIGINT PRIMARY KEY,   -- ID del ticket en Azure DevOps (único, no se puede repetir)
+                work_item_type      TEXT,                 -- Tipo: Bug, Feature, Task, etc.
+                title               TEXT,
+                area_path           TEXT,                 -- Área original en Azure DevOps
+                iteration_path      TEXT,
+                area                TEXT,                 -- Área correcta asignada por el experto (campo clave para clasificación)
+                tags                TEXT,
+                description         TEXT,
+                repro_steps         TEXT,
+                acceptance_criteria TEXT
+            );
+        """)
+
+        # ---------------------------
         # Prompts con versionado
         # ---------------------------
         print("  ⚙️  ado_config_prompt...")
