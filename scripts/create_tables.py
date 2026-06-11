@@ -167,6 +167,21 @@ def create_tables(conn) -> None:
         """)
 
         # ---------------------------
+        # Modelos de IA disponibles
+        # ---------------------------
+        print("  ⚙️  ado_config_models...")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.ado_config_models (
+                id          SERIAL PRIMARY KEY,
+                name        TEXT NOT NULL,           -- Nombre legible: "GPT-4o Mini"
+                deployment  TEXT NOT NULL UNIQUE,    -- Nombre técnico del deployment en Azure OpenAI
+                description TEXT,                    -- Breve descripción y uso recomendado
+                active      BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at  TIMESTAMP DEFAULT NOW()
+            );
+        """)
+
+        # ---------------------------
         # Prompts con versionado
         # ---------------------------
         print("  ⚙️  ado_config_prompt...")
@@ -176,8 +191,15 @@ def create_tables(conn) -> None:
                 version      SERIAL,                -- Se autoincrementa con cada INSERT; los scripts cargan siempre MAX(version)
                 created_at   TIMESTAMP   NOT NULL DEFAULT NOW(),
                 prompt_text  TEXT        NOT NULL,
+                model_id     INTEGER     REFERENCES public.ado_config_models(id),  -- Modelo de IA asociado a esta versión del prompt
                 PRIMARY KEY (prompt_name, version)
             );
+        """)
+
+        # Añadir model_id si la tabla ya existía sin esa columna (migración segura)
+        cur.execute("""
+            ALTER TABLE public.ado_config_prompt
+            ADD COLUMN IF NOT EXISTS model_id INTEGER REFERENCES public.ado_config_models(id);
         """)
 
         # ---------------------------
@@ -200,6 +222,50 @@ def create_tables(conn) -> None:
 
 
 # ---------------------------
+# Insertar modelos de IA iniciales (solo si no existen)
+# ---------------------------
+def insert_initial_models(conn) -> None:
+    models = [
+        ("GPT-4o Mini",  "gpt-4o-mini",  "Modelo rápido y económico. Valor por defecto para todos los prompts."),
+        ("GPT-4o",       "gpt-4o",       "Modelo equilibrado. Buena relación calidad-velocidad para clasificación e intención."),
+        ("GPT-4.1",      "gpt-4.1",      "Alta capacidad de razonamiento. Recomendado para intención y clasificación complejas."),
+        ("GPT-4.1 Mini", "gpt-4.1-mini", "Versión ligera de GPT-4.1. Buen equilibrio entre velocidad y calidad."),
+        ("GPT-5.4",      "gpt-5.4",      "Modelo más avanzado disponible. Máxima precisión en análisis complejos."),
+        ("GPT-5.4 Mini", "gpt-5.4-mini", "Versión eficiente de GPT-5.4. Recomendado para asignación de tags."),
+    ]
+    with conn.cursor() as cur:
+        for name, deployment, description in models:
+            cur.execute("""
+                INSERT INTO public.ado_config_models (name, deployment, description, active)
+                VALUES (%s, %s, %s, TRUE)
+                ON CONFLICT (deployment) DO NOTHING;
+            """, (name, deployment, description))
+            if cur.rowcount > 0:
+                print(f"  ⚙️  Modelo '{name}' ({deployment}) insertado.")
+            else:
+                print(f"  ⏭️  Modelo '{deployment}' ya existe, omitido.")
+    conn.commit()
+
+
+# ---------------------------
+# Asignar modelo por defecto a prompts sin modelo asociado
+# ---------------------------
+def assign_default_model_to_prompts(conn) -> None:
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE public.ado_config_prompt
+            SET model_id = (SELECT id FROM public.ado_config_models WHERE deployment = 'gpt-4o-mini')
+            WHERE model_id IS NULL
+        """)
+        updated = cur.rowcount
+    conn.commit()
+    if updated > 0:
+        print(f"  ⚙️  {updated} versiones de prompt asociadas al modelo por defecto (gpt-4o-mini).")
+    else:
+        print(f"  ⏭️  Todos los prompts ya tienen modelo asociado.")
+
+
+# ---------------------------
 # Main
 # ---------------------------
 def main() -> None:
@@ -214,7 +280,13 @@ def main() -> None:
     print("📋 Creando tablas...")
     create_tables(conn)
 
+    print("🤖 Insertando modelos de IA...")
+    insert_initial_models(conn)
+
     insert_initial_prompts(conn)
+
+    print("🔗 Asignando modelo por defecto a prompts existentes...")
+    assign_default_model_to_prompts(conn)
 
     conn.close()
     print("✅ Todas las tablas creadas correctamente.")

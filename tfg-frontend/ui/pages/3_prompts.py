@@ -31,6 +31,13 @@ if not prompts:
     st.warning("No hay prompts en la base de datos. Ejecuta setup_prompts.py para cargarlos.")
     st.stop()
 
+# Cargar modelos activos para el selector en edición
+try:
+    rm = requests.get(f"{BACKEND_URL}/modelos-ia", timeout=5)
+    modelos_disponibles = [m for m in rm.json() if m["active"]] if rm.ok else []
+except Exception:
+    modelos_disponibles = []
+
 # ---------------------------
 # Layout: izquierda lista / derecha detalle
 # ---------------------------
@@ -120,9 +127,11 @@ with col_detail:
 
     prompt_text = prompt_data.get("prompt_text", "")
     created_at = prompt_data.get("created_at", "")[:16].replace("T", " ") if prompt_data.get("created_at") else ""
+    model_name = prompt_data.get("model_name") or "—"
+    model_id_actual = prompt_data.get("model_id")
 
     if created_at:
-        st.caption(f"Creado: {created_at}")
+        st.caption(f"Creado: {created_at} · Modelo: **{model_name}**")
 
     is_active = st.session_state.selected_version == latest
     if not is_active:
@@ -139,17 +148,32 @@ with col_detail:
         if not is_active:
             st.caption("Solo se puede editar la versión activa.")
     else:
-        new_text = st.text_area("Editar prompt", value=prompt_text, height=450, label_visibility="collapsed")
+        new_text = st.text_area("Editar prompt", value=prompt_text, height=420, label_visibility="collapsed")
+
+        # Selector de modelo para la nueva versión
+        if modelos_disponibles:
+            idx_actual = next((i for i, m in enumerate(modelos_disponibles) if m["id"] == model_id_actual), 0)
+            sel_modelo = st.selectbox(
+                "Modelo de IA para esta versión",
+                modelos_disponibles,
+                index=idx_actual,
+                format_func=lambda m: f"{m['name']}  —  {m['description'] or m['deployment']}",
+            )
+            selected_model_id = sel_modelo["id"]
+        else:
+            st.caption("⚠️ No hay modelos disponibles. Añade uno en la página Modelos de IA.")
+            selected_model_id = None
+
         col_save, col_cancel = st.columns([1, 1])
         with col_save:
             if st.button("💾 Guardar nueva versión", type="primary"):
-                if new_text.strip() == prompt_text.strip():
+                if new_text.strip() == prompt_text.strip() and selected_model_id == model_id_actual:
                     st.warning("No hay cambios respecto a la versión actual.")
                 else:
                     try:
                         r = requests.post(
                             f"{BACKEND_URL}/prompts/{selected_name}",
-                            json={"prompt_text": new_text},
+                            json={"prompt_text": new_text, "model_id": selected_model_id},
                             timeout=10,
                         )
                         if r.ok:

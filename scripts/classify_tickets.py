@@ -28,12 +28,16 @@ AZURE_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 # ---------------------------
 # Carga del prompt desde BD
 # ---------------------------
-def load_prompt(conn, prompt_name: str) -> str:
+def load_prompt(conn, prompt_name: str) -> tuple[str, str]:
+    """Devuelve (prompt_text, deployment) de la versión más reciente.
+    Si el prompt no tiene modelo asociado, usa el deployment del .env como fallback."""
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT prompt_text FROM public.ado_config_prompt
-            WHERE prompt_name = %s
-              AND version = (
+            SELECT p.prompt_text, m.deployment
+            FROM public.ado_config_prompt p
+            LEFT JOIN public.ado_config_models m ON m.id = p.model_id
+            WHERE p.prompt_name = %s
+              AND p.version = (
                   SELECT MAX(version) FROM public.ado_config_prompt
                   WHERE prompt_name = %s
               );
@@ -42,7 +46,8 @@ def load_prompt(conn, prompt_name: str) -> str:
     if not row:
         print(f"❌ No se encontró el prompt '{prompt_name}' en ado_config_prompt")
         sys.exit(1)
-    return row[0]
+    prompt_text, deployment = row
+    return prompt_text, deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT")  # Fallback al .env
 
 # ---------------------------
 # Consulta de entrada
@@ -127,16 +132,16 @@ def build_ticket_text(row: dict) -> str:
 # ---------------------------
 # Llamada a Azure OpenAI
 # ---------------------------
-def classify_ticket(client, ticket_id: int, ticket_text: str, prompt: str) -> tuple[str, str]:
+def classify_ticket(client, ticket_id: int, ticket_text: str, prompt: str, deployment: str) -> tuple[str, str]:
     try:
         response = client.chat.completions.create(
-            model=AZURE_DEPLOYMENT,
+            model=deployment,  # Deployment configurado en el prompt activo (o fallback al .env)
             messages=[
                 {"role": "system", "content": prompt},     # Instrucciones al LLM: cómo clasificar y qué áreas existen
                 {"role": "user", "content": ticket_text},  # Contenido del ticket a clasificar
             ],
             temperature=0.0,                               # Temperatura 0 para máxima consistencia (sin aleatoriedad)
-            max_tokens=200,                                # La respuesta es corta: solo área + justificación
+            max_completion_tokens=200,                     # La respuesta es corta: solo área + justificación
             response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
         )
         data = json.loads(response.choices[0].message.content)
@@ -206,7 +211,7 @@ def fetch_model_tickets(conn) -> str:
 # ---------------------------
 # Procesamiento principal
 # ---------------------------
-def process_tickets(conn, client, base_prompt: str) -> None:
+def process_tickets(conn, client, base_prompt: str, deployment: str) -> None:
     with conn.cursor() as cur:
         cur.execute(QUERY)
         columns = [desc[0] for desc in cur.description]
@@ -223,8 +228,8 @@ def process_tickets(conn, client, base_prompt: str) -> None:
     for i, row in enumerate(rows, 1):
         ticket_id = row["id"]
         ticket_text = build_ticket_text(row)
-        area, justification = classify_ticket(client, ticket_id, ticket_text, prompt)  # El LLM propone el área basándose en el contenido y los tickets modelo
-        save_classification(conn, ticket_id, area, justification, AZURE_DEPLOYMENT)
+        area, justification = classify_ticket(client, ticket_id, ticket_text, prompt, deployment)  # El LLM propone el área basándose en el contenido y los tickets modelo
+        save_classification(conn, ticket_id, area, justification, deployment)
         print(f"  🤖 [{i}/{len(rows)}] #{ticket_id}: {area}")
 
         time.sleep(0.3)  # Pausa entre tickets para no superar el rate limit de la API
@@ -247,8 +252,9 @@ def main() -> None:
         api_version=AZURE_API_VERSION,
     )
 
-    prompt = load_prompt(conn, "prompt_classification")  # Carga la versión más reciente del prompt desde BD
-    process_tickets(conn, client, prompt)
+    prompt, deployment = load_prompt(conn, "prompt_classification")  # Carga prompt y deployment desde BD
+    print(f"🔧 Modelo: {deployment}")
+    process_tickets(conn, client, prompt, deployment)
 
     conn.close()
     print("✅ Clasificación completada.")

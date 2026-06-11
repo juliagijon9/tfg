@@ -128,7 +128,8 @@ with st.expander("🧠 Intención, Clasificación y Tags", expanded=False):
         nivel_just = triage.get("nivel_confianza_justificacion") or ""
         colores = {4: "🟢", 3: "🟡", 2: "🟠", 1: "🔴"}
         icono = colores.get(nivel_id, "⚪")
-        st.caption(f"Extraído: {(triage.get('extracted_at') or '')[:16].replace('T', ' ')}")
+        intention_model = triage.get('intention_model_name') or triage.get('intention_model') or '—'
+        st.caption(f"Extraído: {(triage.get('extracted_at') or '')[:16].replace('T', ' ')} · Modelo: {intention_model}")
         st.caption(f"Confianza en la intención: {icono} **{nivel_dec}**" + (f" · {nivel_just}" if nivel_just else ""))
 
         st.markdown("---")
@@ -138,7 +139,7 @@ with st.expander("🧠 Intención, Clasificación y Tags", expanded=False):
         col2.markdown(f"**Justificación:** {triage.get('justification') or '—'}")
         st.caption(
             f"Clasificado: {(triage.get('classified_at') or '')[:16].replace('T', ' ')} "
-            f"· Modelo: {triage.get('model') or '—'}"
+            f"· Modelo: {triage.get('model_name') or triage.get('model') or '—'}"
         )
 
         st.markdown("---")
@@ -151,7 +152,8 @@ with st.expander("🧠 Intención, Clasificación y Tags", expanded=False):
                 col2.markdown(f"**Justificación:** {item['justificacion'] or '—'}")
         else:
             st.markdown("—")
-        st.caption(f"Taggeado: {(triage.get('extracted_tag_at') or '')[:16].replace('T', ' ')}")
+        tag_model = triage.get('tag_model_name') or triage.get('tag_model') or '—'
+        st.caption(f"Taggeado: {(triage.get('extracted_tag_at') or '')[:16].replace('T', ' ')} · Modelo: {tag_model}")
 
 
 # ---------------------------

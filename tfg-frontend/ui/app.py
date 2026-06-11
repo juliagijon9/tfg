@@ -25,10 +25,14 @@ except Exception:
 col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 col1.metric("Tickets", f"{stats.get('tickets', 0):,}" if stats else "—")
 col2.metric("Embeddings", f"{stats.get('embeddings', 0):,}" if stats else "—")
-col3.metric("Relaciones", f"{stats.get('relations', 0):,}" if stats else "—")
+with col3:
+    st.metric("Relaciones", f"{stats.get('relations_tickets', 0):,}" if stats else "—")
+    st.metric("total", f"{stats.get('relations', 0):,}" if stats else "—", label_visibility="collapsed")
 col4.metric("Intenciones", f"{stats.get('intentions', 0):,}" if stats else "—")
 col5.metric("Clasificados", f"{stats.get('classifications', 0):,}" if stats else "—")
-col6.metric("Tags", f"{stats.get('tags', 0):,}" if stats else "—")
+with col6:
+    st.metric("Tags", f"{stats.get('tags_tickets', 0):,}" if stats else "—")
+    st.metric("total", f"{stats.get('tags', 0):,}" if stats else "—", label_visibility="collapsed")
 col7.metric("Último ID", f"{stats.get('max_id', 0):,}" if stats else "—")
 
 st.markdown("---")

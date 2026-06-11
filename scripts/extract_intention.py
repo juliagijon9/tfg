@@ -35,14 +35,18 @@ DELAY_BETWEEN_CALLS = 0.3  # Segundos de pausa entre llamadas a la API para no s
 # ---------------------------
 # Carga del prompt desde BD
 # ---------------------------
-def load_prompt(prompt_name: str) -> str:
+def load_prompt(prompt_name: str) -> tuple[str, str]:
+    """Devuelve (prompt_text, deployment) de la versión más reciente.
+    Si el prompt no tiene modelo asociado, usa el deployment del .env como fallback."""
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT prompt_text FROM public.ado_config_prompt
-                WHERE prompt_name = %s
-                  AND version = (
+                SELECT p.prompt_text, m.deployment
+                FROM public.ado_config_prompt p
+                LEFT JOIN public.ado_config_models m ON m.id = p.model_id
+                WHERE p.prompt_name = %s
+                  AND p.version = (
                       SELECT MAX(version) FROM public.ado_config_prompt
                       WHERE prompt_name = %s
                   );
@@ -53,7 +57,8 @@ def load_prompt(prompt_name: str) -> str:
     if not row:
         print(f"❌ No se encontró el prompt '{prompt_name}' en ado_config_prompt")
         import sys; sys.exit(1)
-    return row[0]
+    prompt_text, deployment = row
+    return prompt_text, deployment or AZURE_DEPLOYMENT  # Fallback al .env si no hay modelo asociado
 
 
 # ---------------------------
@@ -107,7 +112,7 @@ def fetch_tickets():
 # ---------------------------
 # 2. Llamar a Azure OpenAI
 # ---------------------------
-def extract_intention(work_item_type, title, area_path, iteration_path, tags, description, repro_steps, acceptance_criteria, prompt: str):
+def extract_intention(work_item_type, title, area_path, iteration_path, tags, description, repro_steps, acceptance_criteria, prompt: str, deployment: str):
     client = AzureOpenAI(
         azure_endpoint=AZURE_ENDPOINT,
         api_key=AZURE_KEY,
@@ -127,13 +132,13 @@ def extract_intention(work_item_type, title, area_path, iteration_path, tags, de
     )
 
     response = client.chat.completions.create(
-        model=AZURE_DEPLOYMENT,
+        model=deployment,  # Deployment configurado en el prompt activo (o fallback al .env)
         messages=[
             {"role": "system", "content": prompt},    # El prompt del sistema define las instrucciones al LLM
             {"role": "user", "content": user_payload}, # El contenido del ticket es el mensaje del usuario
         ],
         temperature=0.1,                               # Temperatura baja para respuestas más consistentes y deterministas
-        max_tokens=300,                                # Límite de tokens en la respuesta para controlar coste
+        max_completion_tokens=300,                     # Límite de tokens en la respuesta para controlar coste
         response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
     )
 
@@ -179,9 +184,9 @@ def upsert_intention(work_item_id, intention, model, nivel_confianza, nivel_conf
 # ---------------------------
 def main():
     t_start = time.time()
-    print(f"🔧 Modelo: {AZURE_DEPLOYMENT}")
 
-    prompt = load_prompt("prompt_intention")  # Carga la versión más reciente del prompt desde BD
+    prompt, deployment = load_prompt("prompt_intention")  # Carga prompt y deployment de la versión más reciente
+    print(f"🔧 Modelo: {deployment}")
 
     tickets = fetch_tickets()                 # Obtiene los tickets pendientes de procesar
     if not tickets:
@@ -196,9 +201,9 @@ def main():
         try:
             intention, nivel_confianza, nivel_confianza_justificacion = extract_intention(
                 work_item_type, title, area_path, iteration_path,
-                tags, description, repro_steps, acceptance_criteria, prompt
+                tags, description, repro_steps, acceptance_criteria, prompt, deployment
             )
-            upsert_intention(work_item_id, intention, AZURE_DEPLOYMENT, nivel_confianza, nivel_confianza_justificacion)
+            upsert_intention(work_item_id, intention, deployment, nivel_confianza, nivel_confianza_justificacion)
             processed += 1
             print(f"  ✅ [{processed}/{len(tickets)}] #{work_item_id} — {title[:60]} (confianza: {nivel_confianza} — {nivel_confianza_justificacion[:60]})")
         except Exception as e:
@@ -212,7 +217,7 @@ def main():
     print(f"✅ Completado en {elapsed:.1f}s")
     print(f"   Procesados: {processed}")
     print(f"   Errores:    {errors}")
-    print(f"   Modelo:     {AZURE_DEPLOYMENT}")
+    print(f"   Modelo:     {deployment}")
 
 
 if __name__ == "__main__":

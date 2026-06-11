@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
 
 from backend.db import get_connection
 
@@ -319,8 +321,121 @@ def pipeline_run_all(bg: BackgroundTasks):
 
 
 # ---------------------------
+# Modelos de IA
+# ---------------------------
+
+class ModelCreate(BaseModel):
+    name: str
+    deployment: str
+    description: Optional[str] = None
+
+class ModelUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@app.get("/modelos-ia")
+def list_modelos_ia():
+    """Lista todos los modelos de IA disponibles."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, deployment, description, active, created_at
+                FROM public.ado_config_models
+                ORDER BY id
+            """)
+            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+    finally:
+        conn.close()
+    result = []
+    for row in rows:
+        d = dict(zip(cols, row))
+        if d.get("created_at"):
+            d["created_at"] = d["created_at"].isoformat()
+        result.append(d)
+    return result
+
+
+@app.post("/modelos-ia")
+def create_modelo_ia(body: ModelCreate):
+    """Crea un nuevo modelo de IA. Devuelve error 409 si el deployment ya existe."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM public.ado_config_models WHERE deployment = %s", (body.deployment,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail=f"El deployment '{body.deployment}' ya existe")
+            cur.execute(
+                "INSERT INTO public.ado_config_models (name, deployment, description) VALUES (%s, %s, %s) RETURNING id",
+                (body.name, body.deployment, body.description)
+            )
+            new_id = cur.fetchone()[0]
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": new_id, "ok": True}
+
+
+@app.put("/modelos-ia/{model_id}")
+def update_modelo_ia(model_id: int, body: ModelUpdate):
+    """Actualiza nombre, descripción o estado activo de un modelo."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM public.ado_config_models WHERE id = %s", (model_id,))
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Modelo no encontrado")
+            fields = []
+            values = []
+            if body.name is not None:
+                fields.append("name = %s")
+                values.append(body.name)
+            if body.description is not None:
+                fields.append("description = %s")
+                values.append(body.description)
+            if body.active is not None:
+                fields.append("active = %s")
+                values.append(body.active)
+            if not fields:
+                raise HTTPException(status_code=400, detail="No hay campos para actualizar")
+            values.append(model_id)
+            cur.execute(f"UPDATE public.ado_config_models SET {', '.join(fields)} WHERE id = %s", values)
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+@app.delete("/modelos-ia/{model_id}")
+def delete_modelo_ia(model_id: int):
+    """Elimina un modelo. Devuelve error 409 si hay prompts que lo referencian."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM public.ado_config_prompt WHERE model_id = %s", (model_id,))
+            count = cur.fetchone()[0]
+            if count > 0:
+                raise HTTPException(status_code=409, detail=f"No se puede eliminar: {count} versiones de prompt usan este modelo")
+            cur.execute("DELETE FROM public.ado_config_models WHERE id = %s", (model_id,))
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Modelo no encontrado")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
+
+
+# ---------------------------
 # Prompts
 # ---------------------------
+
+class PromptCreate(BaseModel):
+    prompt_text: str
+    model_id: Optional[int] = None
+
 
 @app.get("/prompts")
 def list_prompts():
@@ -345,55 +460,73 @@ def list_prompts():
 
 @app.get("/prompts/{name}/versions")
 def list_prompt_versions(name: str):
-    """Lista todas las versiones de un prompt."""
+    """Lista todas las versiones de un prompt con el modelo asociado a cada una."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT version, created_at
-                FROM public.ado_config_prompt
-                WHERE prompt_name = %s
-                ORDER BY version DESC
+                SELECT p.version, p.created_at, m.id AS model_id, m.name AS model_name, m.deployment AS model_deployment
+                FROM public.ado_config_prompt p
+                LEFT JOIN public.ado_config_models m ON m.id = p.model_id
+                WHERE p.prompt_name = %s
+                ORDER BY p.version DESC
             """, (name,))
             rows = cur.fetchall()
     finally:
         conn.close()
     if not rows:
         raise HTTPException(status_code=404, detail=f"Prompt '{name}' no encontrado")
-    return [{"version": r[0], "created_at": r[1].isoformat() if r[1] else None} for r in rows]
+    return [
+        {
+            "version": r[0],
+            "created_at": r[1].isoformat() if r[1] else None,
+            "model_id": r[2],
+            "model_name": r[3],
+            "model_deployment": r[4],
+        }
+        for r in rows
+    ]
 
 
 @app.get("/prompts/{name}/{version}")
 def get_prompt_version(name: str, version: int):
-    """Devuelve el texto de una versión concreta de un prompt."""
+    """Devuelve el texto y modelo de una versión concreta de un prompt."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT prompt_text, created_at
-                FROM public.ado_config_prompt
-                WHERE prompt_name = %s AND version = %s
+                SELECT p.prompt_text, p.created_at, m.id AS model_id, m.name AS model_name, m.deployment AS model_deployment
+                FROM public.ado_config_prompt p
+                LEFT JOIN public.ado_config_models m ON m.id = p.model_id
+                WHERE p.prompt_name = %s AND p.version = %s
             """, (name, version))
             row = cur.fetchone()
     finally:
         conn.close()
     if not row:
         raise HTTPException(status_code=404, detail=f"Prompt '{name}' v{version} no encontrado")
-    return {"name": name, "version": version, "prompt_text": row[0], "created_at": row[1].isoformat() if row[1] else None}
+    return {
+        "name": name,
+        "version": version,
+        "prompt_text": row[0],
+        "created_at": row[1].isoformat() if row[1] else None,
+        "model_id": row[2],
+        "model_name": row[3],
+        "model_deployment": row[4],
+    }
 
 
 @app.post("/prompts/{name}")
-def create_prompt_version(name: str, body: dict):
-    """Inserta una nueva versión del prompt. Devuelve la versión creada."""
-    prompt_text = body.get("prompt_text", "").strip()
-    if not prompt_text:
+def create_prompt_version(name: str, body: PromptCreate):
+    """Inserta una nueva versión del prompt con el modelo asociado. Devuelve la versión creada."""
+    if not body.prompt_text.strip():
         raise HTTPException(status_code=400, detail="El texto del prompt no puede estar vacío")
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO public.ado_config_prompt (prompt_name, prompt_text) VALUES (%s, %s) RETURNING version",
-                (name, prompt_text)
+                "INSERT INTO public.ado_config_prompt (prompt_name, prompt_text, model_id) VALUES (%s, %s, %s) RETURNING version",
+                (name, body.prompt_text, body.model_id)
             )
             new_version = cur.fetchone()[0]
         conn.commit()
@@ -484,18 +617,27 @@ def get_ticket_triage(ticket_id: int):
                         WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
                     END AS nivel_confianza_dec,
                     ii.nivel_confianza_justificacion,
+                    ii.model AS intention_model,
+                    mi.name AS intention_model_name,
                     ic.area, ic.justification, ic.model, ic.classified_at,
-                    it.lista_tag, it.extracted_tag_at
+                    mc.name AS model_name,
+                    it.lista_tag, it.extracted_tag_at,
+                    it.tag_model,
+                    mt.name AS tag_model_name
                 FROM public.ado_work_items i
                 LEFT JOIN ado_work_item_intentions ii ON ii.work_item_id = i.id
+                LEFT JOIN public.ado_config_models mi ON mi.deployment = ii.model
                 LEFT JOIN public.ado_work_item_classifications ic ON ic.work_item_id = i.id
+                LEFT JOIN public.ado_config_models mc ON mc.deployment = ic.model
                 LEFT JOIN (
                     SELECT work_item_id,
                            string_agg(tag || ':::' || COALESCE(justificacion, ''), '|||') AS lista_tag,
-                           max(extracted_tag_at) AS extracted_tag_at
+                           max(extracted_tag_at) AS extracted_tag_at,
+                           max(model) AS tag_model
                     FROM ado_work_item_tag
                     GROUP BY work_item_id
                 ) it ON it.work_item_id = i.id
+                LEFT JOIN public.ado_config_models mt ON mt.deployment = it.tag_model
                 WHERE i.id = %s
                   AND ii.work_item_id IS NOT NULL
             """, (ticket_id,))
@@ -639,6 +781,10 @@ def stats():
         for key, table in tables.items():
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             result[key] = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT source_id) FROM ado_work_item_relations")
+        result["relations_tickets"] = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(DISTINCT work_item_id) FROM ado_work_item_tag")
+        result["tags_tickets"] = cur.fetchone()[0]
         cur.execute("SELECT MAX(id) FROM ado_work_items")
         result["max_id"] = cur.fetchone()[0] or 0
         cur.close()
