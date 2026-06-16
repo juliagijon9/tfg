@@ -89,7 +89,7 @@ with col_detail:
     if st.session_state.selected_version is None or st.session_state.selected_version not in version_numbers:
         st.session_state.selected_version = latest
 
-    vcol1, vcol2, vcol3 = st.columns([1, 2, 1])
+    vcol1, vcol2, vcol3 = st.columns([1, 20, 1])
 
     with vcol1:
         if st.button("◀", disabled=(st.session_state.selected_version == version_numbers[-1])):

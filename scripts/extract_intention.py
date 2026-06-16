@@ -137,7 +137,7 @@ def extract_intention(work_item_type, title, area_path, iteration_path, tags, de
             {"role": "system", "content": prompt},    # El prompt del sistema define las instrucciones al LLM
             {"role": "user", "content": user_payload}, # El contenido del ticket es el mensaje del usuario
         ],
-        temperature=0.1,                               # Temperatura baja para respuestas más consistentes y deterministas
+        temperature=0.0,                               # Temperatura 0 para máxima consistencia (mismo ticket → mismo resultado siempre)
         max_completion_tokens=300,                     # Límite de tokens en la respuesta para controlar coste
         response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
     )

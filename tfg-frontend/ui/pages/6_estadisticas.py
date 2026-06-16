@@ -147,8 +147,9 @@ else:
         rows.append({
             "Nivel": r["nivel_confianza_intencion_id"],
             "Confianza en la intención": r["nivel_confianza_intencion_dec"] or "—",
+            "Modelo IA": r.get("model") or "—",
             "Cantidad": r["n_item"],
-            "Porcentaje (%)": pct,
+            "Porcentaje (%)": round(pct, 2),
         })
     df = pd.DataFrame(rows)
     total_row = pd.DataFrame([{"Nivel": None, "Confianza en la intención": "TOTAL", "Cantidad": total_int, "Porcentaje (%)": 100.0}])
@@ -172,6 +173,7 @@ else:
             "Área": r["area"],
             "Nivel": r["nivel_confianza_intencion_id"],
             "Confianza en la intención": r["nivel_confianza_intencion_dec"] or "—",
+            "Modelo IA": r.get("model") or "—",
             "Cantidad": r["n_item"],
         }
         for r in data["clasificaciones_confianza"]
@@ -196,6 +198,7 @@ else:
             "Tag": r["tag"],
             "Nivel": r["nivel_confianza_intencion_id"],
             "Confianza en la intención": r["nivel_confianza_intencion_dec"] or "—",
+            "Modelo IA": r.get("model") or "—",
             "Cantidad": r["n_item"],
         }
         for r in data["tags_confianza"]

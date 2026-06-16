@@ -549,7 +549,7 @@ def get_ticket(ticket_id: int):
                        i.created_date, i.changed_date, i.area_path, i.iteration_path,
                        i.assigned_to, i.tags, i.description, i.repro_steps, i.acceptance_criteria
                 FROM public.ado_work_items i
-                WHERE i.id = %s AND i.created_date > '2026-04-30'
+                WHERE i.id = %s
             """, (ticket_id,))
             row = cur.fetchone()
             cols = [d[0] for d in cur.description]
@@ -581,7 +581,6 @@ def get_ticket_duplicates(ticket_id: int):
                 LEFT JOIN ado_work_item_relations r ON r.source_id = i.id
                 LEFT JOIN public.ado_work_items i2 ON i2.id = r.target_id
                 WHERE i.id = %s
-                  AND i.created_date > '2026-04-30'
                   AND e.work_item_id IS NOT NULL
                   AND r.source_id IS NOT NULL
                   AND i2.id IS NOT NULL
@@ -847,15 +846,16 @@ def stats_detalle(fecha_inicio: str = None, fecha_fin: str = None):
                         WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
                         WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
                     END AS nivel_confianza_intencion_dec,
+                    ii.model,
                     COUNT(*) n_item
                 FROM ado_work_item_intentions ii
                 JOIN ado_work_items i ON ii.work_item_id = i.id
                 WHERE i.created_date BETWEEN %s AND %s
-                GROUP BY 1, 2
-                ORDER BY 1 DESC, 2
+                GROUP BY 1, 2, 3
+                ORDER BY 1 DESC, 2, 3
             """, (fecha_inicio, fecha_fin))
             intenciones_confianza = [
-                {"nivel_confianza_intencion_id": r[0], "nivel_confianza_intencion_dec": r[1], "n_item": r[2]}
+                {"nivel_confianza_intencion_id": r[0], "nivel_confianza_intencion_dec": r[1], "model": r[2], "n_item": r[3]}
                 for r in cur.fetchall()
             ]
 
@@ -869,16 +869,17 @@ def stats_detalle(fecha_inicio: str = None, fecha_fin: str = None):
                         WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
                         WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
                     END AS nivel_confianza_intencion_dec,
+                    ic.model,
                     COUNT(*) n_item
                 FROM ado_work_item_classifications ic
                 JOIN ado_work_items i ON ic.work_item_id = i.id
                 JOIN ado_work_item_intentions ii ON ii.work_item_id = i.id
                 WHERE i.created_date BETWEEN %s AND %s
-                GROUP BY 1, 2, 3
-                ORDER BY 1, 2 DESC, 3
+                GROUP BY 1, 2, 3, 4
+                ORDER BY 1, 2 DESC, 3, 4
             """, (fecha_inicio, fecha_fin))
             clasificaciones_confianza = [
-                {"area": r[0], "nivel_confianza_intencion_id": r[1], "nivel_confianza_intencion_dec": r[2], "n_item": r[3]}
+                {"area": r[0], "nivel_confianza_intencion_id": r[1], "nivel_confianza_intencion_dec": r[2], "model": r[3], "n_item": r[4]}
                 for r in cur.fetchall()
             ]
 
@@ -892,16 +893,17 @@ def stats_detalle(fecha_inicio: str = None, fecha_fin: str = None):
                         WHEN ii.nivel_confianza = 2 THEN 'Insuficiente'
                         WHEN ii.nivel_confianza = 1 THEN 'Muy deficiente'
                     END AS nivel_confianza_intencion_dec,
+                    it.model,
                     COUNT(*) n_item
                 FROM ado_work_item_tag it
                 JOIN ado_work_items i ON it.work_item_id = i.id
                 JOIN ado_work_item_intentions ii ON ii.work_item_id = i.id
                 WHERE i.created_date BETWEEN %s AND %s
-                GROUP BY 1, 2, 3
-                ORDER BY 1, 2 DESC, 3
+                GROUP BY 1, 2, 3, 4
+                ORDER BY 1, 2 DESC, 3, 4
             """, (fecha_inicio, fecha_fin))
             tags_confianza = [
-                {"tag": r[0], "nivel_confianza_intencion_id": r[1], "nivel_confianza_intencion_dec": r[2], "n_item": r[3]}
+                {"tag": r[0], "nivel_confianza_intencion_id": r[1], "nivel_confianza_intencion_dec": r[2], "model": r[3], "n_item": r[4]}
                 for r in cur.fetchall()
             ]
 
