@@ -82,9 +82,9 @@ PostgreSQL 16 con un esquema relacional que almacena: tickets sincronizados, emb
    Variables principales a configurar en `.env`:
    - `POSTGRES_*` — credenciales de la base de datos
    - `PGADMIN_*` — credenciales de acceso a pgAdmin
-   - `ADO_ORG`, `ADO_PROJECT`, `ADO_PAT` — acceso a Azure DevOps
-   - `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_DEPLOYMENT` — acceso a Azure OpenAI (si se deja vacío, se generan embeddings deterministas de prueba con `EMBEDDING_MODEL=dummy`)
-   - `RELATED_THRESHOLD`, `DUPLICATE_THRESHOLD`, `TOP_K` — umbrales de similitud para la detección de duplicados/relacionados
+   - `ADO_ORG`, `ADO_PROJECT`, `ADO_PAT` — acceso a Azure DevOps (usado por `scripts/sync_ado_to_postgres.py` y `sync_service.py`)
+   - `AZURE_DEVOPS_ORG_URL`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` — acceso a Azure DevOps (usado por el resto del backend, `config.py`). **Nota:** actualmente coexisten dos nomenclaturas distintas para las mismas credenciales según el componente; hay que rellenar ambos juegos de variables para que el sistema funcione completo.
+   - `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_CHAT_DEPLOYMENT`, `AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT` — acceso a Azure OpenAI (modelos de chat y de embeddings)
 
 2. Levanta los contenedores:
 
