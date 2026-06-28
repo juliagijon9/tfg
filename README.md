@@ -67,6 +67,10 @@ PostgreSQL 16 con un esquema relacional que almacena: tickets sincronizados, emb
 - Una organización y proyecto de Azure DevOps con un Personal Access Token (PAT)
 - Una instancia de Azure OpenAI con los deployments de chat y embeddings configurados
 
+> **⚠️ Nota de seguridad:** por motivos de seguridad, este repositorio **no incluye**:
+> - Las credenciales reales de Azure DevOps ni de Azure OpenAI (debes generarlas tú mismo y completarlas en tu propio `.env`, ver `.env.example`).
+> - El texto completo de los prompts de producción (intención, clasificación y tags), ya que contienen información interna del negocio de la empresa (nombres de equipos, sistemas internos, reglas de clasificación). El sistema funciona igualmente sin ellos: basta con crear tus propios prompts desde la interfaz web (página **Prompts**) la primera vez que se ejecute `create_tables.py`, o insertarlos manualmente en la tabla `ado_config_prompt`.
+
 ## Puesta en marcha
 
 1. Copia el fichero de variables de entorno y complétalo con tus credenciales:
