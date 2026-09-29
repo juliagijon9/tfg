@@ -57,6 +57,19 @@ services:
       - backend
     restart: unless-stopped
 
+  scheduler:
+    build:
+      context: ./tfg-backend
+    container_name: tfg-scheduler
+    command: ["python", "-m", "backend.scheduler"]
+    environment:
+      BACKEND_URL: http://backend:8000
+      PIPELINE_SCHEDULE_TIMES: "08:00,14:00"
+      TZ: Europe/Madrid
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 volumes:
   db_data:
   pgadmin_data:
