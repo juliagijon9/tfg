@@ -60,13 +60,14 @@ else:
             with st.container(border=True):
                 st.markdown(f"**Editando: {m['name']}**")
                 ed_name = st.text_input("Nombre", value=m["name"], key=f"ed_name_{m['id']}")
+                ed_deployment = st.text_input("Deployment en Azure", value=m["deployment"], key=f"ed_deployment_{m['id']}")
                 ed_desc = st.text_input("Descripción", value=m.get("description") or "", key=f"ed_desc_{m['id']}")
                 c1, c2 = st.columns([1, 1])
                 with c1:
                     if st.button("💾 Guardar", key=f"ed_save_{m['id']}", type="primary"):
                         r = requests.put(
                             f"{BACKEND_URL}/modelos-ia/{m['id']}",
-                            json={"name": ed_name.strip(), "description": ed_desc.strip() or None},
+                            json={"name": ed_name.strip(), "deployment": ed_deployment.strip(), "description": ed_desc.strip() or None},
                             timeout=5,
                         )
                         if r.ok:

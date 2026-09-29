@@ -331,6 +331,7 @@ class ModelCreate(BaseModel):
 
 class ModelUpdate(BaseModel):
     name: Optional[str] = None
+    deployment: Optional[str] = None
     description: Optional[str] = None
     active: Optional[bool] = None
 
@@ -390,6 +391,15 @@ def update_modelo_ia(model_id: int, body: ModelUpdate):
                 raise HTTPException(status_code=404, detail="Modelo no encontrado")
             fields = []
             values = []
+            if body.deployment is not None:
+                cur.execute(
+                    "SELECT id FROM public.ado_config_models WHERE deployment = %s AND id <> %s",
+                    (body.deployment, model_id),
+                )
+                if cur.fetchone():
+                    raise HTTPException(status_code=409, detail="Ese deployment ya está registrado")
+                fields.append("deployment = %s")
+                values.append(body.deployment)
             if body.name is not None:
                 fields.append("name = %s")
                 values.append(body.name)

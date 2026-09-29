@@ -232,14 +232,18 @@ def insert_initial_models(conn) -> None:
         ("GPT-4.1 Mini", "gpt-4.1-mini", "Versión ligera de GPT-4.1. Buen equilibrio entre velocidad y calidad."),
         ("GPT-5.4",      "gpt-5.4",      "Modelo más avanzado disponible. Máxima precisión en análisis complejos."),
         ("GPT-5.4 Mini", "gpt-5.4-mini", "Versión eficiente de GPT-5.4. Recomendado para asignación de tags."),
+        ("GPT-6 Astra", "gpt-6-astra", "Modelo GPT-6 con razonamiento y capacidades multimodales."),
+        ("GPT-6 Luna", "gpt-6-luna", "Modelo GPT-6 para tareas de razonamiento."),
+        ("GPT-6 Sol", "gpt-6-sol", "Modelo GPT-6 para tareas de razonamiento."),
     ]
     with conn.cursor() as cur:
         for name, deployment, description in models:
+            active = not deployment.startswith("gpt-6-")
             cur.execute("""
                 INSERT INTO public.ado_config_models (name, deployment, description, active)
-                VALUES (%s, %s, %s, TRUE)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT (deployment) DO NOTHING;
-            """, (name, deployment, description))
+            """, (name, deployment, description, active))
             if cur.rowcount > 0:
                 print(f"  ⚙️  Modelo '{name}' ({deployment}) insertado.")
             else:

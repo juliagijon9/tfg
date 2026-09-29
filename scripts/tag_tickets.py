@@ -140,13 +140,14 @@ def build_ticket_text(row: dict) -> str:
 def get_tags(client, ticket_id: int, ticket_text: str, prompt: str, deployment: str) -> dict[str, str]:
     """Devuelve un diccionario {tag: justificacion_individual} con los tags asignados al ticket."""
     try:
+        generation_options = {} if deployment.startswith("gpt-6-") else {"temperature": 0.0}
         response = client.chat.completions.create(
             model=deployment,  # Deployment configurado en el prompt activo (o fallback al .env)
             messages=[
                 {"role": "system", "content": prompt},     # Instrucciones al LLM: qué tags existen y cómo asignarlos
                 {"role": "user", "content": ticket_text},  # Contenido del ticket a taggear
             ],
-            temperature=0.0,                               # Temperatura 0 para máxima consistencia (sin aleatoriedad)
+            **generation_options,
             max_completion_tokens=400,                     # Más tokens que clasificación porque puede haber varios tags con justificaciones
             response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
         )

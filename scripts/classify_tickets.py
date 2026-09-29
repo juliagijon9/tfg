@@ -134,13 +134,14 @@ def build_ticket_text(row: dict) -> str:
 # ---------------------------
 def classify_ticket(client, ticket_id: int, ticket_text: str, prompt: str, deployment: str) -> tuple[str, str]:
     try:
+        generation_options = {} if deployment.startswith("gpt-6-") else {"temperature": 0.0}
         response = client.chat.completions.create(
             model=deployment,  # Deployment configurado en el prompt activo (o fallback al .env)
             messages=[
                 {"role": "system", "content": prompt},     # Instrucciones al LLM: cómo clasificar y qué áreas existen
                 {"role": "user", "content": ticket_text},  # Contenido del ticket a clasificar
             ],
-            temperature=0.0,                               # Temperatura 0 para máxima consistencia (sin aleatoriedad)
+            **generation_options,
             max_completion_tokens=200,                     # La respuesta es corta: solo área + justificación
             response_format={"type": "json_object"},       # Fuerza al LLM a devolver JSON válido siempre
         )
