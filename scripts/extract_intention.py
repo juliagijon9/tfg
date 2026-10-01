@@ -131,7 +131,7 @@ def extract_intention(work_item_type, title, area_path, iteration_path, tags, de
         f"Criterios de aceptación: {strip_html(acceptance_criteria) or '(no aplican)'}"
     )
 
-    generation_options = {} if deployment.startswith("gpt-6-") else {"temperature": 0.0}
+    generation_options = {"reasoning_effort": "none"} if deployment.startswith("gpt-6-") else {"temperature": 0.0}
     response = client.chat.completions.create(
         model=deployment,  # Deployment configurado en el prompt activo (o fallback al .env)
         messages=[

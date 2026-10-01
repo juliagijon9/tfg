@@ -140,7 +140,7 @@ def build_ticket_text(row: dict) -> str:
 def get_tags(client, ticket_id: int, ticket_text: str, prompt: str, deployment: str) -> dict[str, str]:
     """Devuelve un diccionario {tag: justificacion_individual} con los tags asignados al ticket."""
     try:
-        generation_options = {} if deployment.startswith("gpt-6-") else {"temperature": 0.0}
+        generation_options = {"reasoning_effort": "none"} if deployment.startswith("gpt-6-") else {"temperature": 0.0}
         response = client.chat.completions.create(
             model=deployment,  # Deployment configurado en el prompt activo (o fallback al .env)
             messages=[
